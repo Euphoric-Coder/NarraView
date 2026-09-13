@@ -1,7 +1,9 @@
 export const spacing = {
-  small: 12,
-  medium: 24,
-  large: 48,
-  tvSafeHorizontal: 160,
-  tvSafeVertical: 96,
+  xs: 8,
+  sm: 16,
+  md: 24,
+  lg: 32,
+  xl: 48,
+  xxl: 64,
+  heroInset: 96, // Large padding for TV overscan and cinematic inset
 } as const;

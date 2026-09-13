@@ -1,88 +1,84 @@
-import React from 'react';
-import {Pressable, StyleSheet, Text, ViewStyle} from 'react-native';
+import React, { useState } from 'react';
+import { Pressable, StyleSheet, Text, ViewStyle } from 'react-native';
+import { colors } from '../theme/colors';
+import { typography } from '../theme/typography';
+import { spacing } from '../theme/spacing';
 
-export interface FocusableButtonProps {
+interface FocusableButtonProps {
   label: string;
   onPress: () => void;
-  onFocus?: () => void;
-  onBlur?: () => void;
-  hasTVPreferredFocus?: boolean;
-  testID?: string;
   style?: ViewStyle;
+  hasTVPreferredFocus?: boolean;
+  disabled?: boolean;
 }
 
-export const FocusableButton = ({
-  label,
-  onPress,
-  onFocus,
-  onBlur,
-  hasTVPreferredFocus = false,
-  testID,
-  style,
-}: FocusableButtonProps) => {
-  const [isFocused, setIsFocused] = React.useState(false);
-
-  const handleFocus = () => {
-    setIsFocused(true);
-    onFocus?.();
-  };
-
-  const handleBlur = () => {
-    setIsFocused(false);
-    onBlur?.();
-  };
+export const FocusableButton = ({ label, onPress, style, hasTVPreferredFocus, disabled }: FocusableButtonProps) => {
+  const [isFocused, setIsFocused] = useState(false);
 
   return (
     <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      hasTVPreferredFocus={hasTVPreferredFocus}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
+      disabled={disabled}
+      hasTVPreferredFocus={hasTVPreferredFocus && !disabled}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => setIsFocused(false)}
       onPress={onPress}
-      testID={testID}
-      style={({pressed}) => [
+      style={({ pressed }) => [
         styles.button,
-        isFocused && styles.focused,
-        pressed && styles.pressed,
+        isFocused && styles.focusedButton,
+        pressed && styles.pressedButton,
+        disabled && styles.disabledButton,
         style,
+      ]}
+    >
+      <Text style={[
+        styles.label, 
+        isFocused && styles.focusedLabel,
+        disabled && styles.disabledLabel
       ]}>
-      <Text style={styles.label}>{label}</Text>
+        {label}
+      </Text>
     </Pressable>
   );
 };
 
 const styles = StyleSheet.create({
   button: {
+    backgroundColor: colors.surfaceHighlight,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    borderRadius: 32, // Pill shape
+    borderWidth: 2,
+    borderColor: 'transparent',
     alignItems: 'center',
-    backgroundColor: '#E9EEF2',
-    borderColor: '#E9EEF2',
-    borderRadius: 4,
-    borderWidth: 3,
     justifyContent: 'center',
-    minWidth: 360,
-    paddingHorizontal: 40,
-    paddingVertical: 22,
   },
-  focused: {
-    backgroundColor: '#FFB000',
-    borderColor: '#FFFFFF',
-    transform: [{scale: 1.05}],
-    shadowColor: '#FFB000',
-    shadowOffset: {width: 0, height: 8},
-    shadowOpacity: 0.5,
+  focusedButton: {
+    backgroundColor: colors.accent,
+    borderColor: '#FFFFFF', // High contrast border for TV focus
+    transform: [{ scale: 1.05 }],
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.6,
     shadowRadius: 16,
-    elevation: 8,
+    elevation: 12,
   },
-  pressed: {
-    backgroundColor: '#D78300',
-    borderColor: '#FFB000',
+  pressedButton: {
+    transform: [{ scale: 0.98 }],
+  },
+  disabledButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    opacity: 0.5,
   },
   label: {
-    color: '#101417',
-    fontSize: 28,
+    color: colors.primaryText,
+    fontSize: typography.body.fontSize,
     fontWeight: '700',
-    includeFontPadding: false,
-    lineHeight: 34,
+    letterSpacing: typography.body.letterSpacing,
+  },
+  focusedLabel: {
+    color: colors.background, // Invert text on focus for premium feel
+  },
+  disabledLabel: {
+    color: colors.mutedText,
   },
 });
