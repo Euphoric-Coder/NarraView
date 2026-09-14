@@ -1,3 +1,9 @@
+export interface ContentScene {
+  startTime: number;
+  endTime: number;
+  label: string;
+}
+
 export interface ContentItem {
   id: string;
   title: string;
@@ -7,6 +13,9 @@ export interface ContentItem {
   year: number;
   progress?: number;
   posterColor: string;
+  videoSource?: string;
+  durationSeconds?: number;
+  scenes?: ContentScene[];
 }
 
 export interface ContentCategory {

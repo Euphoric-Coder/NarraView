@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { TVFocusGuideView } from '@amazon-devices/react-native-kepler';
 import { ContentItem } from '../types/content';
@@ -8,11 +8,12 @@ import { typography } from '../theme/typography';
 import { spacing } from '../theme/spacing';
 
 interface DetailsScreenProps {
+  onWatch: () => void;
   item: ContentItem;
 }
 
-export const DetailsScreen = ({ item }: DetailsScreenProps) => {
-  const [statusMessage, setStatusMessage] = useState('');
+export const DetailsScreen = ({ item, onWatch }: DetailsScreenProps) => {
+  
 
   return (
     <View style={styles.screen}>
@@ -33,7 +34,7 @@ export const DetailsScreen = ({ item }: DetailsScreenProps) => {
         <View style={styles.actions}>
           <FocusableButton
             label="Watch Now"
-            onPress={() => setStatusMessage('Video playback arrives in NarraView v0.3.')}
+            onPress={onWatch}
             hasTVPreferredFocus
             style={styles.primaryButton}
           />
@@ -45,9 +46,7 @@ export const DetailsScreen = ({ item }: DetailsScreenProps) => {
           />
         </View>
 
-        {statusMessage ? (
-          <Text style={styles.statusMessage}>{statusMessage}</Text>
-        ) : null}
+        
       </TVFocusGuideView>
     </View>
   );
