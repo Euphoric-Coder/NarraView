@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, BackHandler } from 'react-native';
+import { useEffect } from 'react';
 import { TVFocusGuideView } from '@amazon-devices/react-native-kepler';
 import { ContentItem } from '../types/content';
 import { FocusableButton } from '../components/FocusableButton';
@@ -9,11 +10,19 @@ import { spacing } from '../theme/spacing';
 
 interface DetailsScreenProps {
   onWatch: () => void;
+  onBack: () => void;
   item: ContentItem;
 }
 
-export const DetailsScreen = ({ item, onWatch }: DetailsScreenProps) => {
-  
+export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => {
+  useEffect(() => {
+    const backAction = () => {
+      onBack();
+      return true;
+    };
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [onBack]);
 
   return (
     <View style={styles.screen}>

@@ -27,6 +27,7 @@ export const App = () => {
           <DetailsScreen 
             item={selectedItem} 
             onWatch={() => setRoute('Player')}
+            onBack={() => setRoute('Home')}
           />
         ) : (
           <HomeScreen onSelectItem={handleSelectItem} />

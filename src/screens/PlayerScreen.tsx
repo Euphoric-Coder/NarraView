@@ -1,11 +1,13 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, BackHandler, Text, ActivityIndicator, TVEventHandler } from 'react-native';
 
 import { ContentItem } from '../types/content';
 import { VideoPlayer } from '../components/player/VideoPlayer';
 import { PlayerControls } from '../components/player/PlayerControls';
+import { NarraViewOverlay } from '../components/player/NarraViewOverlay';
 import { usePlaybackState } from '../player/usePlaybackState';
 import { FocusableButton } from '../components/FocusableButton';
+import { getCurrentScene } from '../utils/getCurrentScene';
 
 interface PlayerScreenProps {
   item: ContentItem;
@@ -14,6 +16,7 @@ interface PlayerScreenProps {
 
 export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
   const videoRef = useRef<any>(null);
+  const [isNarraViewOpen, setIsNarraViewOpen] = useState(false);
   
   const {
     isPlaying,
@@ -33,9 +36,8 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     clearHideControlsTimer
   } = usePlaybackState();
 
-  const currentSceneLabel = item.scenes?.find(
-    s => currentTimeSeconds >= s.startTime && currentTimeSeconds < s.endTime
-  )?.label;
+  const currentScene = getCurrentScene(item.scenes, currentTimeSeconds);
+  const currentSceneLabel = currentScene?.label;
 
   const source = item.videoSource?.trim();
 
@@ -51,6 +53,10 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
 
   useEffect(() => {
     const backAction = () => {
+      if (isNarraViewOpen) {
+        setIsNarraViewOpen(false);
+        return true;
+      }
       clearHideControlsTimer();
       onExit();
       return true;
@@ -58,21 +64,23 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [onExit, clearHideControlsTimer]);
+  }, [isNarraViewOpen, onExit, clearHideControlsTimer]);
 
   useEffect(() => {
     const tvEventHandler = new TVEventHandler();
     tvEventHandler.enable(undefined, (cmp, evt) => {
       if (evt && evt.eventType !== 'blur' && evt.eventType !== 'focus') {
-        console.log('[NarraView Controls] interaction detected', evt.eventType);
-        showControls();
+        if (!isNarraViewOpen) {
+          console.log('[NarraView Controls] interaction detected', evt.eventType);
+          showControls();
+        }
       }
     });
     
     return () => {
       tvEventHandler.disable();
     };
-  }, [showControls]);
+  }, [showControls, isNarraViewOpen]);
 
   // Loading timeout
   useEffect(() => {
@@ -90,6 +98,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
   }, [isBuffering, isPlaying, hasError, source, item.title, setIsBuffering, setHasError, setErrorMessage]);
 
   const handleSeekBack = () => {
+    if (isNarraViewOpen) return;
     showControls();
     if (videoRef.current) {
       const newTime = Math.max(0, currentTimeSeconds - 10);
@@ -99,6 +108,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
   };
 
   const handleSeekForward = () => {
+    if (isNarraViewOpen) return;
     showControls();
     if (videoRef.current && durationSeconds > 0) {
       const newTime = Math.min(durationSeconds, currentTimeSeconds + 10);
@@ -108,6 +118,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
   };
 
   const handleTogglePlayPause = () => {
+    if (isNarraViewOpen) return;
     showControls();
     if (videoRef.current) {
       if (isPlaying) {
@@ -115,6 +126,13 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
       } else {
         videoRef.current.play();
       }
+    }
+  };
+
+  const handleOpenNarraView = () => {
+    // Only open if paused
+    if (!isPlaying) {
+      setIsNarraViewOpen(true);
     }
   };
 
@@ -145,6 +163,9 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     );
   }
 
+  // When NarraView overlay is open, standard player controls should be hidden/uninteractable
+  const shouldShowPlayerControls = isControlsVisible && !isNarraViewOpen;
+
   return (
     <View style={styles.screen}>
       <VideoPlayer
@@ -156,7 +177,9 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
           setCurrentTimeSeconds(currentTime);
         }}
         onProgress={({ currentTime }) => {
-          setCurrentTimeSeconds(currentTime);
+          if (!isNarraViewOpen) {
+            setCurrentTimeSeconds(currentTime);
+          }
         }}
         onEnd={() => {
           setIsPlaying(false);
@@ -184,9 +207,9 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
       <View 
         style={[
           styles.controlsContainer, 
-          { opacity: isControlsVisible ? 1 : 0 }
+          { opacity: shouldShowPlayerControls ? 1 : 0 }
         ]} 
-        pointerEvents={isControlsVisible ? 'auto' : 'none'}
+        pointerEvents={shouldShowPlayerControls ? 'auto' : 'none'}
       >
         <PlayerControls
           title={item.title}
@@ -199,8 +222,16 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
           onTogglePlayPause={handleTogglePlayPause}
           onSeekBack={handleSeekBack}
           onSeekForward={handleSeekForward}
+          onOpenNarraView={handleOpenNarraView}
         />
       </View>
+
+      {isNarraViewOpen && (
+        <NarraViewOverlay
+          currentScene={currentScene}
+          onClose={() => setIsNarraViewOpen(false)}
+        />
+      )}
     </View>
   );
 };

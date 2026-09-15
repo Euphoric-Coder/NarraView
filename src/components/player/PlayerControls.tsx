@@ -17,6 +17,7 @@ interface PlayerControlsProps {
   onTogglePlayPause: () => void;
   onSeekBack: () => void;
   onSeekForward: () => void;
+  onOpenNarraView?: () => void;
   // Debug info
   isBuffering: boolean;
   hasError: boolean;
@@ -31,6 +32,7 @@ export const PlayerControls = ({
   onTogglePlayPause,
   onSeekBack,
   onSeekForward,
+  onOpenNarraView,
   isBuffering,
   hasError
 }: PlayerControlsProps) => {
@@ -50,6 +52,7 @@ export const PlayerControls = ({
           <Text style={styles.debugText}>duration: {durationSeconds.toFixed(2)}s</Text>
           <Text style={styles.debugText}>playing: {isPlaying.toString()}</Text>
           <Text style={styles.debugText}>buffering: {isBuffering.toString()}</Text>
+          {currentScene && <Text style={styles.debugText}>scene: {currentScene}</Text>}
         </View>
       </View>
 
@@ -78,6 +81,16 @@ export const PlayerControls = ({
             onPress={onSeekForward}
             style={styles.seekButton}
           />
+          
+          {/* Ask NarraView Button - Only available when paused */}
+          {!isPlaying && onOpenNarraView && (
+            <FocusableButton 
+              label="[ Ask NarraView ]"
+              onPress={onOpenNarraView}
+              style={styles.narraViewButton}
+              labelStyle={styles.narraViewButtonLabel}
+            />
+          )}
         </TVFocusGuideView>
       </View>
     </View>
@@ -145,5 +158,16 @@ const styles = StyleSheet.create({
   },
   seekButton: {
     minWidth: 100,
+  },
+  narraViewButton: {
+    minWidth: 200,
+    backgroundColor: 'rgba(255, 200, 0, 0.2)', // subtle amber tint
+    marginLeft: spacing.xl,
+    borderColor: '#FFD700',
+    borderWidth: 1,
+  },
+  narraViewButtonLabel: {
+    color: '#FFD700',
+    fontWeight: 'bold',
   }
 });
