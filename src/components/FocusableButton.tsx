@@ -7,12 +7,13 @@ import { spacing } from '../theme/spacing';
 interface FocusableButtonProps {
   label: string;
   onPress: () => void;
-  style?: ViewStyle;
+  style?: ViewStyle | any;
+  labelStyle?: any;
   hasTVPreferredFocus?: boolean;
   disabled?: boolean;
 }
 
-export const FocusableButton = ({ label, onPress, style, hasTVPreferredFocus, disabled }: FocusableButtonProps) => {
+export const FocusableButton = ({ label, onPress, style, labelStyle, hasTVPreferredFocus, disabled }: FocusableButtonProps) => {
   const [isFocused, setIsFocused] = useState(false);
 
   return (
@@ -33,7 +34,8 @@ export const FocusableButton = ({ label, onPress, style, hasTVPreferredFocus, di
       <Text style={[
         styles.label, 
         isFocused && styles.focusedLabel,
-        disabled && styles.disabledLabel
+        disabled && styles.disabledLabel,
+        labelStyle
       ]}>
         {label}
       </Text>

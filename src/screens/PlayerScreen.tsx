@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, BackHandler, Text, ActivityIndicator, TVEventHandler } from 'react-native';
+import { StyleSheet, View, BackHandler, Text, ActivityIndicator, TVEventHandler as RNTVEventHandler } from 'react-native';
 
 import { ContentItem } from '../types/content';
 import { VideoPlayer } from '../components/player/VideoPlayer';
@@ -46,7 +46,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     if (source && source.startsWith('https://')) {
       try {
         const urlObj = new URL(source);
-        console.log('[NarraView] source host:', urlObj.hostname);
+        console.log('[NarraView] source host:', (urlObj as any).hostname);
       } catch (e) {}
     }
   }, [item, source]);
@@ -67,8 +67,8 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
   }, [isNarraViewOpen, onExit, clearHideControlsTimer]);
 
   useEffect(() => {
-    const tvEventHandler = new TVEventHandler();
-    tvEventHandler.enable(undefined, (cmp, evt) => {
+    const tvEventHandler = new RNTVEventHandler();
+    tvEventHandler.enable(undefined, (cmp: any, evt: any) => {
       if (evt && evt.eventType !== 'blur' && evt.eventType !== 'focus') {
         if (!isNarraViewOpen) {
           console.log('[NarraView Controls] interaction detected', evt.eventType);
@@ -84,7 +84,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
 
   // Loading timeout
   useEffect(() => {
-    let timeout: NodeJS.Timeout;
+    let timeout: ReturnType<typeof setTimeout>;
     if (isBuffering && !isPlaying && !hasError && source) {
       timeout = setTimeout(() => {
         setIsBuffering(false);
@@ -228,6 +228,8 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
 
       {isNarraViewOpen && (
         <NarraViewOverlay
+          contentId={item.id}
+          currentTimeSeconds={currentTimeSeconds}
           currentScene={currentScene}
           onClose={() => setIsNarraViewOpen(false)}
         />

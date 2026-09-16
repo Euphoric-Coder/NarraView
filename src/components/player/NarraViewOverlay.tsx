@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View, Text, ActivityIndicator } from 'react-native';
 import { TVFocusGuideView } from '@amazon-devices/react-native-kepler';
 import { ContentScene } from '../../types/content';
 import { FocusableButton } from '../FocusableButton';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
+import { askNarraView } from '../../services/narraViewApi';
 
 interface NarraViewOverlayProps {
+  contentId: string;
+  currentTimeSeconds: number;
   currentScene?: ContentScene;
   onClose: () => void;
 }
@@ -18,11 +21,41 @@ const mockQueries = [
   'Who is here?',
 ];
 
-export const NarraViewOverlay = ({ currentScene, onClose }: NarraViewOverlayProps) => {
-  const [mockResponse, setMockResponse] = useState<string | null>(null);
+export const NarraViewOverlay = ({ contentId, currentTimeSeconds, currentScene, onClose }: NarraViewOverlayProps) => {
+  const [response, setResponse] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
-  const handleQuerySelect = (query: string) => {
-    setMockResponse('NarraView AI responses arrive in Phase 2.');
+  const handleQuerySelect = async (query: string) => {
+    console.log('[NarraView Overlay] submitting question:', query);
+    setIsLoading(true);
+    setHasError(false);
+    
+    try {
+      const result = await askNarraView({
+        contentId,
+        timestamp: currentTimeSeconds,
+        question: query,
+        scene: currentScene ? {
+          startTime: currentScene.startTime,
+          endTime: currentScene.endTime,
+          label: currentScene.label,
+        } : undefined
+      });
+      
+      console.log('[NarraView Overlay] received response:', result);
+      setResponse(result.answer);
+    } catch (error) {
+      console.error('[NarraView Overlay] ERROR', error);
+      setHasError(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleTryAgain = () => {
+    setHasError(false);
+    setResponse(null);
   };
 
   return (
@@ -30,34 +63,55 @@ export const NarraViewOverlay = ({ currentScene, onClose }: NarraViewOverlayProp
       <TVFocusGuideView style={styles.panel} autoFocus>
         <Text style={styles.brandTitle}>✦ NarraView</Text>
         
-        <View style={styles.sceneInfoBox}>
-          <Text style={styles.labelHeader}>CURRENT SCENE</Text>
-          {currentScene ? (
-            <>
-              <Text style={styles.sceneTitle}>{currentScene.label}</Text>
-            </>
-          ) : (
-            <Text style={styles.noSceneText}>
-              Scene context is not available for this title yet.
-            </Text>
-          )}
-        </View>
+        {!isLoading && !hasError && !response && (
+          <>
+            <View style={styles.sceneInfoBox}>
+              <Text style={styles.labelHeader}>CURRENT SCENE</Text>
+              {currentScene ? (
+                <>
+                  <Text style={styles.sceneTitle}>{currentScene.label}</Text>
+                </>
+              ) : (
+                <Text style={styles.noSceneText}>
+                  Scene context is not available for this title yet.
+                </Text>
+              )}
+            </View>
 
-        {!mockResponse ? (
-          <View style={styles.queryList}>
-            {mockQueries.map((query, index) => (
-              <FocusableButton
-                key={index}
-                label={query}
-                onPress={() => handleQuerySelect(query)}
-                style={styles.queryButton}
-                labelStyle={styles.queryButtonLabel}
-              />
-            ))}
+            <View style={styles.queryList}>
+              {mockQueries.map((query, index) => (
+                <FocusableButton
+                  key={index}
+                  label={query}
+                  onPress={() => handleQuerySelect(query)}
+                  style={styles.queryButton}
+                  labelStyle={styles.queryButtonLabel}
+                />
+              ))}
+            </View>
+          </>
+        )}
+
+        {isLoading && (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="large" color="#FFD700" />
+            <Text style={styles.loadingText}>Thinking about this scene...</Text>
           </View>
-        ) : (
+        )}
+
+        {hasError && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>NarraView couldn't answer right now.</Text>
+            <View style={styles.errorActions}>
+              <FocusableButton label="[ Try Again ]" onPress={handleTryAgain} style={styles.actionButton} />
+              <FocusableButton label="[ Close ]" onPress={onClose} style={styles.actionButton} />
+            </View>
+          </View>
+        )}
+
+        {response && !isLoading && !hasError && (
           <View style={styles.responseBox}>
-            <Text style={styles.responseText}>{mockResponse}</Text>
+            <Text style={styles.responseText}>{response}</Text>
           </View>
         )}
 
@@ -139,6 +193,36 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     lineHeight: 24,
+  },
+  loadingBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+    marginBottom: spacing.xxl,
+  },
+  loadingText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 16,
+    marginTop: spacing.lg,
+  },
+  errorBox: {
+    alignItems: 'center',
+    marginBottom: spacing.xxl,
+    padding: spacing.lg,
+  },
+  errorText: {
+    color: colors.primaryText,
+    fontSize: 18,
+    marginBottom: spacing.xl,
+    textAlign: 'center',
+  },
+  errorActions: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  actionButton: {
+    paddingHorizontal: spacing.lg,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
   footerRow: {
     marginTop: spacing.sm,
