@@ -19,7 +19,10 @@
     "typescript": "~7.0.2"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1133.0",
+    "@aws/bedrock-token-generator": "^1.1.0",
     "aws-cdk-lib": "^2.268.0",
-    "constructs": "^10.5.0"
+    "constructs": "^10.5.0",
+    "openai": "^6.49.0"
   }
 }
