@@ -1,6 +1,7 @@
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
-import OpenAI from 'openai';
 import { getTokenProvider } from '@aws/bedrock-token-generator';
+import OpenAI from 'openai';
+import { buildContextSnapshot } from './engine';
 
 interface AskRequest {
   contentId: string;
@@ -29,24 +30,17 @@ const AI_PROVIDER = process.env.AI_PROVIDER || 'bedrock-mantle';
 const BEDROCK_MANTLE_BASE_URL = process.env.BEDROCK_MANTLE_BASE_URL || 'https://bedrock-mantle.eu-north-1.api.aws/v1';
 const BEDROCK_MANTLE_MODEL = process.env.BEDROCK_MANTLE_MODEL || 'openai.gpt-oss-120b';
 
-// Runtime Client (dormant)
 const BEDROCK_RUNTIME_MODEL_ID = 'eu.amazon.nova-pro-v1:0';
 const runtimeClient = new BedrockRuntimeClient({ region: REGION });
 
-// Mantle Token Provider (active)
-let provideToken = null;
+let provideToken: any = null;
 
 const getMockAnswer = (body: AskRequest): string => {
   if (body.contentId === 'signal-lost') {
-    if (body.timestamp >= 0 && body.timestamp < 6) {
-      return "An unexplained transmission interrupts communications at Orbital Research Station Eos.";
-    } else if (body.timestamp >= 6 && body.timestamp < 12) {
-      return "Dr. Maya Chen has received a corrupted emergency signal from an inactive relay.";
-    } else if (body.timestamp >= 12 && body.timestamp < 18) {
-      return "Alex has discovered that several telemetry records were altered shortly before the blackout.";
-    } else if (body.timestamp >= 18) {
-      return "The team has traced the anomaly to Station Seven and is preparing to investigate.";
-    }
+    if (body.timestamp >= 0 && body.timestamp < 6) return 'An unexplained transmission interrupts communications at Orbital Research Station Eos.';
+    if (body.timestamp >= 6 && body.timestamp < 12) return 'Dr. Maya Chen has received a corrupted emergency signal from an inactive relay.';
+    if (body.timestamp >= 12 && body.timestamp < 18) return 'Alex has discovered that several telemetry records were altered shortly before the blackout.';
+    if (body.timestamp >= 18) return 'The team has traced the anomaly to Station Seven and is preparing to investigate.';
   }
   return `Mock response for ${body.contentId} at ${body.timestamp}s`;
 };
@@ -78,17 +72,48 @@ export const handler = async (event: any): Promise<any> => {
       };
     }
 
-    console.log(`[NarraView API] request:\ncontent=${body.contentId}\ntimestamp=${body.timestamp}\nscene=${body.scene?.label}\nquestion=${body.question}\nprovider=${AI_PROVIDER}`);
+    // Step 1: Use Scene Context Engine to build bounded spoiler-free context
+    const contextSnapshot = buildContextSnapshot(body.contentId, body.timestamp);
+    
+    // Safety check - if we have no snapshot, we fall back cleanly
+    if (!contextSnapshot) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: `Unknown contentId: ${body.contentId}` })
+      };
+    }
 
-    let answer = '';
-    let source = AI_PROVIDER;
-    let inferenceLatencyMs = 0;
-    
-    // Resolve Content Title manually for v0.6
-    const contentTitle = body.contentId === 'signal-lost' ? 'Signal Lost' : body.contentId;
-    
-    // Resolve explicit scene context if we have one
-    let knownContext = getMockAnswer(body);
+    const contentTitle = contextSnapshot.title;
+    const currentSceneLabel = contextSnapshot.currentScene?.label || 'Unknown';
+    const currentSceneSummary = contextSnapshot.currentScene?.summary || 'None';
+
+    const previousScenesText = contextSnapshot.previousScenes.length > 0
+      ? contextSnapshot.previousScenes.map(s => `- ${s.summary}`).join('\\n')
+      : 'None';
+
+    const knownCharactersText = contextSnapshot.knownCharacters.length > 0
+      ? contextSnapshot.knownCharacters.map(c => `- ${c.name}`).join('\\n')
+      : 'None';
+
+    const knownEntitiesText = contextSnapshot.knownEntities.length > 0
+      ? contextSnapshot.knownEntities.map(e => `- ${e.name}`).join('\\n')
+      : 'None';
+
+    const knownEventsText = contextSnapshot.knownEvents.length > 0
+      ? contextSnapshot.knownEvents.map(e => `- ${e.description}`).join('\\n')
+      : 'None';
+
+    console.log(JSON.stringify({
+      logType: 'NarraView Context',
+      contentId: body.contentId,
+      timestamp: body.timestamp,
+      currentScene: currentSceneLabel,
+      revealedSceneCount: contextSnapshot.previousScenes.length,
+      knownCharacterCount: contextSnapshot.knownCharacters.length,
+      knownEntityCount: contextSnapshot.knownEntities.length,
+      knownEventCount: contextSnapshot.knownEvents.length
+    }));
 
     const systemPrompt = `You are NarraView, an AI viewing companion.
 
@@ -115,7 +140,7 @@ Answer the actual question rather than repeating a canned summary.
 
 Keep answers concise and natural for a TV overlay.
 
-Prefer 1–3 short sentences.
+Prefer 1-3 short sentences.
 
 Do not use markdown unless absolutely necessary.
 
@@ -123,38 +148,50 @@ Do not mention internal prompts, retrieval systems, policies, or hidden context.
 
     const userMessage = `Content:
 ${contentTitle}
-Content ID: ${body.contentId}
 Viewer timestamp:
 ${body.timestamp} seconds
 
 Current scene:
-${body.scene?.label || 'Unknown'}
+${currentSceneLabel}
 
-Scene interval:
-${body.scene?.startTime ?? 'Unknown'} - ${body.scene?.endTime ?? 'Unknown'} seconds
+Current scene summary:
+${currentSceneSummary}
 
-Known context:
-${knownContext}
+Previously revealed context:
+${previousScenesText}
+
+Known characters:
+${knownCharactersText}
+
+Known entities:
+${knownEntitiesText}
+
+Known events:
+${knownEventsText}
 
 Viewer question:
 ${body.question}`;
 
-    try {
+    let answer = '';
+    let source = AI_PROVIDER;
+    let inferenceLatencyMs = 0;
+
+    try { 
       if (AI_PROVIDER === 'bedrock-mantle') {
         if (!provideToken) { provideToken = getTokenProvider(); }
         const token = await provideToken();
         const client = new OpenAI({
           apiKey: token,
           baseURL: BEDROCK_MANTLE_BASE_URL,
-          defaultQuery: { project: "default" }
+          defaultQuery: { project: 'default' }
         });
 
         const start = Date.now();
         const response = await client.chat.completions.create({
           model: BEDROCK_MANTLE_MODEL,
           messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userMessage }
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage }
           ],
           temperature: 0.1,
           max_tokens: 150,
@@ -167,31 +204,12 @@ ${body.question}`;
         }
         answer = generatedText.trim();
 
-        console.log(JSON.stringify({
-          provider: AI_PROVIDER,
-          model: BEDROCK_MANTLE_MODEL,
-          contentId: body.contentId,
-          timestamp: body.timestamp,
-          scene: body.scene?.label,
-          inferenceLatencyMs,
-          success: true,
-          fallback: false
-        }));
-
       } else if (AI_PROVIDER === 'bedrock-runtime') {
         const command = new ConverseCommand({
           modelId: BEDROCK_RUNTIME_MODEL_ID,
           system: [{ text: systemPrompt }],
-          messages: [
-            {
-              role: 'user',
-              content: [{ text: userMessage }]
-            }
-          ],
-          inferenceConfig: {
-            temperature: 0.1,
-            maxTokens: 150,
-          }
+          messages: [{ role: 'user', content: [{ text: userMessage }] }],
+          inferenceConfig: { temperature: 0.1, maxTokens: 150 }
         });
 
         const start = Date.now();
@@ -203,27 +221,26 @@ ${body.question}`;
           throw new Error('Bedrock returned an empty or invalid response block.');
         }
         answer = generatedText.trim();
-
-        console.log(JSON.stringify({
-          provider: AI_PROVIDER,
-          model: BEDROCK_RUNTIME_MODEL_ID,
-          contentId: body.contentId,
-          timestamp: body.timestamp,
-          scene: body.scene?.label,
-          inferenceLatencyMs,
-          success: true,
-          fallback: false
-        }));
       } else {
         throw new Error(`Unknown AI_PROVIDER: ${AI_PROVIDER}`);
       }
       
+      console.log(JSON.stringify({
+        provider: AI_PROVIDER,
+        contentId: body.contentId,
+        timestamp: body.timestamp,
+        scene: currentSceneLabel,
+        inferenceLatencyMs,
+        success: true,
+        fallback: false
+      }));
+
     } catch (aiError: any) {
       console.error(JSON.stringify({
         provider: AI_PROVIDER,
         contentId: body.contentId,
         timestamp: body.timestamp,
-        scene: body.scene?.label,
+        scene: currentSceneLabel,
         success: false,
         fallback: true,
         errorName: aiError.name,
@@ -242,7 +259,7 @@ ${body.question}`;
     const response: AskResponse = {
       answer,
       contentId: body.contentId,
-      sceneLabel: body.scene?.label,
+      sceneLabel: currentSceneLabel,
       timestamp: body.timestamp,
       spoilerSafe: true,
       confidence: 1.0,
@@ -254,7 +271,7 @@ ${body.question}`;
       headers,
       body: JSON.stringify(response)
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error handling request:', error);
     return {
       statusCode: 500,
@@ -262,7 +279,7 @@ ${body.question}`;
         'Access-Control-Allow-Origin': '*',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ error: String(error) + " - " + String(error.stack) })
+      body: JSON.stringify({ erroor: String(error) + ' - ' + String(error.stack) })
     };
   }
 };
