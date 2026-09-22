@@ -17,6 +17,8 @@ interface PlayerScreenProps {
 export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
   const videoRef = useRef<any>(null);
   const [isNarraViewOpen, setIsNarraViewOpen] = useState(false);
+  const wasPlayingBeforeNarraViewRef = useRef(false);
+  const [frozenTimestamp, setFrozenTimestamp] = useState(0);
   
   const {
     isPlaying,
@@ -54,7 +56,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
   useEffect(() => {
     const backAction = () => {
       if (isNarraViewOpen) {
-        setIsNarraViewOpen(false);
+        handleCloseNarraView();
         return true;
       }
       clearHideControlsTimer();
@@ -64,7 +66,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [isNarraViewOpen, onExit, clearHideControlsTimer]);
+  }, [isNarraViewOpen, onExit, clearHideControlsTimer, isPlaying]);
 
   useEffect(() => {
     const tvEventHandler = new RNTVEventHandler();
@@ -130,9 +132,24 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
   };
 
   const handleOpenNarraView = () => {
-    // Only open if paused
-    if (!isPlaying) {
-      setIsNarraViewOpen(true);
+    wasPlayingBeforeNarraViewRef.current = isPlaying;
+    if (isPlaying) {
+      setIsPlaying(false);
+      if (videoRef.current) {
+        videoRef.current.pause();
+      }
+    }
+    setFrozenTimestamp(currentTimeSeconds);
+    setIsNarraViewOpen(true);
+  };
+
+  const handleCloseNarraView = () => {
+    setIsNarraViewOpen(false);
+    if (wasPlayingBeforeNarraViewRef.current) {
+      setIsPlaying(true);
+      if (videoRef.current) {
+        videoRef.current.play();
+      }
     }
   };
 
@@ -231,7 +248,8 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
           contentId={item.id}
           currentTimeSeconds={currentTimeSeconds}
           currentScene={currentScene}
-          onClose={() => setIsNarraViewOpen(false)}
+          onClose={handleCloseNarraView}
+          contextTimestamp={frozenTimestamp}
         />
       )}
     </View>

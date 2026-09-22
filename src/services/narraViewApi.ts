@@ -22,8 +22,16 @@ export interface AskNarraViewResponse {
   source: string;
 }
 
-export const askNarraView = async (request: AskNarraViewRequest): Promise<AskNarraViewResponse> => {
+export const askNarraView = async (request: AskNarraViewRequest, externalSignal?: AbortSignal): Promise<AskNarraViewResponse> => {
   const controller = new AbortController();
+  
+  if (externalSignal) {
+    externalSignal.addEventListener('abort', () => {
+      console.log('[NarraView API] external cancellation requested');
+      controller.abort();
+    });
+  }
+
   const timeoutId = setTimeout(() => {
     console.log('[NarraView API] timeout reached, aborting request');
     controller.abort();

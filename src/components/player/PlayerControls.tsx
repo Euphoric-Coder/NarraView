@@ -82,8 +82,8 @@ export const PlayerControls = ({
             style={styles.seekButton}
           />
           
-          {/* Ask NarraView Button - Only available when paused */}
-          {!isPlaying && onOpenNarraView && (
+          {/* Ask NarraView Button */}
+          {onOpenNarraView && (
             <FocusableButton 
               label="[ Ask NarraView ]"
               onPress={onOpenNarraView}
