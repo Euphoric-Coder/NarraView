@@ -55,9 +55,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   focusedButton: {
-    backgroundColor: colors.accent,
-    borderColor: '#FFFFFF', // High contrast border for TV focus
-    transform: [{ scale: 1.05 }],
+    backgroundColor: 'rgba(245, 184, 0, 0.2)',
+    borderColor: '#F5B800', // Solid gold border
+    transform: [{ scale: 1.02 }],
     shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.6,
@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
     letterSpacing: typography.body.letterSpacing,
   },
   focusedLabel: {
-    color: colors.background, // Invert text on focus for premium feel
+    color: '#FFFFFF', // Keep text readable and bright
   },
   disabledLabel: {
     color: colors.mutedText,

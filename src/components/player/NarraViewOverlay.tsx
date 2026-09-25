@@ -1,108 +1,85 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Text, ActivityIndicator, Animated, ScrollView, Pressable } from 'react-native';
-import { TVFocusGuideView } from '@amazon-devices/react-native-kepler';
-import { ContentScene } from '../../types/content';
+import React, { useRef, useState, useEffect } from 'react';
+import { StyleSheet, View, Text, Pressable, ActivityIndicator, Animated, ScrollView, Easing, BackHandler } from 'react-native';
+// @ts-ignore
+import { TVFocusGuideView } from 'react-native';
 import { FocusableButton } from '../FocusableButton';
 import { spacing } from '../../theme/spacing';
 import { askNarraView } from '../../services/narraViewApi';
 
 interface NarraViewOverlayProps {
-  contentId: string;
-  currentTimeSeconds: number; // For fallback
-  contextTimestamp?: number; // Frozen timestamp
-  currentScene?: ContentScene;
   onClose: () => void;
+  contentId: string;
+  currentTimeSeconds: number;
+  contextTimestamp?: number;
+  currentScene?: any;
 }
 
 type OverlayState = 'idle' | 'loading' | 'success' | 'error';
 
 const QUICK_ACTIONS = [
-  { id: 'what', label: 'WHAT HAPPENED?', query: 'What just happened?' },
-  { id: 'why', label: 'WHY DOES THIS MATTER?', query: 'Why is this important?' },
-  { id: 'who', label: 'WHO IS INVOLVED?', query: 'Who is involved in this scene?' },
-  { id: 'explain', label: 'EXPLAIN SIMPLY', query: 'Explain this scene simply.' }
+  { id: 'action-1', label: 'What happened?', query: 'What just happened in this scene?' },
+  { id: 'action-2', label: 'Why does it matter?', query: 'Why is this moment important to the story?' },
+  { id: 'action-3', label: 'Who\'s involved?', query: 'Who are the characters involved here?' },
+  { id: 'action-4', label: 'Explain simply', query: 'Explain this scene simply.' },
+  { id: 'action-5', label: 'Context so far', query: 'What do I know about this situation so far?' },
 ];
 
-export const NarraViewOverlay = ({ contentId, currentTimeSeconds, contextTimestamp, currentScene, onClose }: NarraViewOverlayProps) => {
+export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, currentScene }: NarraViewOverlayProps) => {
+  const [fadeAnim] = useState(new Animated.Value(0));
   const [overlayState, setOverlayState] = useState<OverlayState>('idle');
   const [currentQuestion, setCurrentQuestion] = useState<string>('');
   const [currentAnswer, setCurrentAnswer] = useState<string>('');
+  const [isAnswerFocused, setIsAnswerFocused] = useState<boolean>(false);
+
   
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
   const scrollViewRef = useRef<ScrollView>(null);
-
-  const effectiveTimestamp = contextTimestamp !== undefined ? contextTimestamp : currentTimeSeconds;
-
+  
   useEffect(() => {
     Animated.timing(fadeAnim, {
       toValue: 1,
-      duration: 250,
+      duration: 300,
       useNativeDriver: true,
     }).start();
-
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
+    
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBackPress();
+      return true;
+    });
+    return () => backHandler.remove();
   }, []);
 
-  const handleQuerySelect = async (query: string) => {
-    if (overlayState === 'loading') return;
-    
-    console.log('[NarraView Overlay] submitting question:', query);
-    setCurrentQuestion(query);
-    setOverlayState('loading');
-    
-    abortControllerRef.current = new AbortController();
-    
-    try {
-      const result = await askNarraView({
-        contentId,
-        timestamp: effectiveTimestamp,
-        question: query,
-        scene: currentScene ? {
-          startTime: currentScene.startTime,
-          endTime: currentScene.endTime,
-          label: currentScene.label,
-        } : undefined
-      }, abortControllerRef.current.signal);
-      
-      console.log('[NarraView Overlay] received response:', result);
-      setCurrentAnswer(result.answer);
-      setOverlayState('success');
-      
-      // Give UI time to render then ensure scroll resets to top
-      setTimeout(() => {
-        scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-      }, 50);
-      
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.log('[NarraView Overlay] request aborted');
-      } else {
-        console.error('[NarraView Overlay] ERROR', error);
-        setOverlayState('error');
-      }
-    } finally {
-      abortControllerRef.current = null;
+  const handleBackPress = () => {
+    if (overlayState === 'success' || overlayState === 'error') {
+      setOverlayState('idle');
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    } else {
+      handleClose();
     }
-  };
-
-  const handleBackToQuestions = () => {
-    setOverlayState('idle');
-    setTimeout(() => {
-      scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-    }, 50);
   };
 
   const handleClose = () => {
     Animated.timing(fadeAnim, {
       toValue: 0,
-      duration: 150,
+      duration: 250,
       useNativeDriver: true,
-    }).start(() => onClose());
+    }).start(() => {
+      onClose();
+    });
+  };
+
+  const handleQuerySelect = async (question: string) => {
+    setCurrentQuestion(question);
+    setOverlayState('loading');
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    
+    try {
+      const response = await askNarraView({ contentId, timestamp: currentTimeSeconds, question, scene: currentScene });
+      setCurrentAnswer(response.answer);
+      setOverlayState('success');
+    } catch (error) {
+      console.error("NarraView API Error:", error);
+      setOverlayState('error');
+    }
   };
 
   return (
@@ -111,10 +88,17 @@ export const NarraViewOverlay = ({ contentId, currentTimeSeconds, contextTimesta
         
         {/* Fixed Header */}
         <View style={styles.header}>
-          <Text style={styles.brandEyebrow}>NARRAVIEW</Text>
-          <Text style={styles.sceneTitle} numberOfLines={2}>
-            {currentScene ? currentScene.label : 'Understanding Context...'}
-          </Text>
+          <View style={styles.headerTopRow}>
+            <Text style={styles.brandEyebrow}>NARRAVIEW</Text>
+          </View>
+          <View style={styles.headerBottomRow}>
+            <Text style={styles.sceneTitle} numberOfLines={1}>
+              {currentScene ? currentScene.label : 'Understanding Context...'}
+            </Text>
+            <Text style={styles.timestampText}>
+              {Math.floor(currentTimeSeconds / 60).toString().padStart(2, '0')}:{(currentTimeSeconds % 60).toString().padStart(2, '0')}
+            </Text>
+          </View>
         </View>
         
         {/* Scrollable Middle Content */}
@@ -131,10 +115,11 @@ export const NarraViewOverlay = ({ contentId, currentTimeSeconds, contextTimesta
                 <View style={styles.idleState}>
                   <Text style={styles.promptText}>Ask about this moment</Text>
                   <View style={styles.actionList}>
-                    {QUICK_ACTIONS.map((action) => (
+                    {QUICK_ACTIONS.map((action, index) => (
                       <FocusableButton
                         key={action.id}
                         label={action.label}
+                        hasTVPreferredFocus={index === 0}
                         onPress={() => handleQuerySelect(action.query)}
                         style={styles.quickActionBtn}
                         labelStyle={styles.quickActionLabel}
@@ -146,7 +131,7 @@ export const NarraViewOverlay = ({ contentId, currentTimeSeconds, contextTimesta
 
               {overlayState === 'loading' && (
                 <View style={styles.loadingState}>
-                  <ActivityIndicator size="large" color="#FFD700" />
+                  <Text style={styles.loadingDots}>• • •</Text>
                   <Text style={styles.loadingText}>Understanding this moment...</Text>
                 </View>
               )}
@@ -158,15 +143,25 @@ export const NarraViewOverlay = ({ contentId, currentTimeSeconds, contextTimesta
                   
                   <View style={styles.answerDivider} />
                   
-                  <Text style={styles.answerText}>{currentAnswer}</Text>
+                  <Pressable 
+                    hasTVPreferredFocus
+                    onFocus={() => setIsAnswerFocused(true)}
+                    onBlur={() => setIsAnswerFocused(false)}
+                    style={() => [
+                      styles.answerBlock,
+                      isAnswerFocused && styles.answerBlockFocused
+                    ]}
+                  >
+                    <Text style={styles.answerBrand}>NARRAVIEW</Text>
+                    <Text style={styles.answerText}>{currentAnswer}</Text>
+                  </Pressable>
                   
                   <View style={styles.followUpList}>
                     <FocusableButton
-                      label="ASK ANOTHER"
-                      onPress={handleBackToQuestions}
+                      label="Ask another"
+                      onPress={() => setOverlayState('idle')}
                       style={styles.followUpBtn}
                       labelStyle={styles.followUpLabel}
-                      hasTVPreferredFocus
                     />
                   </View>
                 </View>
@@ -174,17 +169,17 @@ export const NarraViewOverlay = ({ contentId, currentTimeSeconds, contextTimesta
 
               {overlayState === 'error' && (
                 <View style={styles.errorState}>
-                  <Text style={styles.errorText}>NarraView couldn't answer right now.</Text>
+                  <Text style={styles.errorText}>Couldn't answer this moment.</Text>
                   <View style={styles.errorActions}>
                     <FocusableButton 
-                      label="RETRY" 
+                      label="Retry" 
                       onPress={() => handleQuerySelect(currentQuestion)} 
                       style={styles.actionBtn}
                       hasTVPreferredFocus 
                     />
                     <FocusableButton 
-                      label="BACK TO QUESTIONS" 
-                      onPress={handleBackToQuestions} 
+                      label="Back to questions" 
+                      onPress={() => setOverlayState('idle')} 
                       style={styles.actionBtn} 
                     />
                   </View>
@@ -196,12 +191,20 @@ export const NarraViewOverlay = ({ contentId, currentTimeSeconds, contextTimesta
         
         {/* Fixed Footer */}
         <View style={styles.footer}>
-          <FocusableButton 
-            label="CLOSE NARRAVIEW" 
-            onPress={handleClose} 
-            style={styles.closeBtn} 
-            labelStyle={styles.closeBtnLabel}
-          />
+          <View style={styles.footerRow}>
+            <FocusableButton 
+              label="Back" 
+              onPress={handleBackPress} 
+              style={styles.footerBtn} 
+              labelStyle={styles.footerBtnLabel}
+            />
+            <FocusableButton 
+              label="Close" 
+              onPress={handleClose} 
+              style={styles.footerBtn} 
+              labelStyle={styles.footerBtnLabel}
+            />
+          </View>
         </View>
 
       </TVFocusGuideView>
@@ -212,61 +215,75 @@ export const NarraViewOverlay = ({ contentId, currentTimeSeconds, contextTimesta
 const styles = StyleSheet.create({
   overlayContainer: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)', // Dim background slightly
-    justifyContent: 'center', // Vertically center the modal
-    alignItems: 'flex-start', // Anchor to left
-    paddingLeft: spacing.heroInset,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)', // Dim background layer
+    justifyContent: 'flex-start', // Allow margin positioning
+    alignItems: 'flex-start',
   },
   panel: {
-    width: '40%', // approx 38-44%
-    minWidth: 420,
-    height: '75%', // Use explicit height so it never collapses and is never too short!
-    backgroundColor: 'rgba(12, 12, 15, 0.94)',
+    width: '44%', // Increased width for more horizontal reading space
+    minWidth: 480,
+    height: '90%', // Dramatically increased height for maximum content space
+    marginTop: '5%', // Anchored even higher
+    marginLeft: '6%', // Slightly closer to left edge
+    backgroundColor: 'rgba(12, 12, 15, 0.96)', // Dark translucent
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
-    paddingTop: 36,
-    paddingHorizontal: 48,
+    paddingTop: 24,
+    paddingHorizontal: 32,
     paddingBottom: 32,
     flexDirection: 'column',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.8,
-    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.9,
+    shadowRadius: 24,
     elevation: 20,
   },
   
   // Header
   header: {
-    marginBottom: 24,
+    marginBottom: 28,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.1)',
-    paddingBottom: 24,
+    paddingBottom: 20,
+  },
+  headerTopRow: {
+    marginBottom: 4,
+  },
+  headerBottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   brandEyebrow: {
     color: 'rgba(255, 255, 255, 0.5)',
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
     letterSpacing: 2,
-    marginBottom: 4,
   },
   sceneTitle: {
     color: '#FFFFFF',
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '600',
-    lineHeight: 34,
+    flex: 1,
+  },
+  timestampText: {
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: 18,
+    fontWeight: '500',
+    marginLeft: 16,
   },
   
   // Scroll Area
   scrollWrapper: {
     flex: 1,
-    minHeight: 0, // Allows ScrollView to shrink properly
+    minHeight: 0,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 24, // Breathing room at bottom of scroll
+    paddingBottom: 16,
   },
   focusGuide: {
   },
@@ -277,7 +294,7 @@ const styles = StyleSheet.create({
   },
   promptText: {
     color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 30,
+    fontSize: 20,
     marginBottom: 24,
   },
   actionList: {
@@ -287,27 +304,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 0,
-    height: 72, // Compact TV button
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 12,
+    height: 56, // Compact
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
   },
   quickActionLabel: {
-    fontSize: 24,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '500',
     textAlign: 'left',
     width: '100%',
   },
   
   // LOADING State
   loadingState: {
-    paddingVertical: 60,
+    paddingVertical: 80,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  loadingDots: {
+    color: '#F5B800',
+    fontSize: 24,
+    fontWeight: 'bold',
+    letterSpacing: 4,
+    marginBottom: 24,
+  },
   loadingText: {
     color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 24,
-    marginTop: 16,
+    fontSize: 20,
   },
   
   // SUCCESS State
@@ -316,27 +341,44 @@ const styles = StyleSheet.create({
   },
   youAskedLabel: {
     color: 'rgba(255, 255, 255, 0.5)',
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '700',
     letterSpacing: 1,
     marginBottom: 4,
   },
   askedQuestionText: {
-    color: '#E0E0E0',
-    fontSize: 30,
-    fontStyle: 'italic',
-    marginBottom: 24,
+    color: '#FFFFFF',
+    fontSize: 22,
+    marginBottom: 28,
   },
   answerDivider: {
     height: 1,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    marginBottom: 24,
+    marginBottom: 28,
+  },
+  answerBlock: {
+    padding: 16,
+    marginHorizontal: -16,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    marginBottom: 16,
+  },
+  answerBlockFocused: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: 'rgba(245, 184, 0, 0.5)',
+  },
+  answerBrand: {
+    color: '#F5B800',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 8,
   },
   answerText: {
-    color: '#FFD700', // Premium Amber
-    fontSize: 30,
-    lineHeight: 36,
-    fontWeight: '500',
+    color: '#E0E0E0',
+    fontSize: 24,
+    lineHeight: 34,
     marginBottom: 32,
   },
   followUpList: {
@@ -346,13 +388,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 0,
-    height: 72,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 12,
+    height: 56,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
   },
   followUpLabel: {
-    fontSize: 24,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '500',
   },
   
   // ERROR State
@@ -361,8 +405,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   errorText: {
-    color: '#FFFFFF',
-    fontSize: 30,
+    color: '#E0E0E0',
+    fontSize: 24,
     marginBottom: 24,
     textAlign: 'center',
   },
@@ -372,11 +416,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionBtn: {
-    height: 72,
+    height: 56,
     paddingHorizontal: 24,
     paddingVertical: 0,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 12,
+    borderRadius: 8,
     justifyContent: 'center'
   },
   
@@ -386,20 +430,21 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
     paddingTop: 16,
-    alignItems: 'flex-start',
   },
-  closeBtn: {
+  footerRow: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  footerBtn: {
     backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-    borderRadius: 12,
-    height: 56,
-    paddingHorizontal: 20,
+    height: 48,
+    paddingHorizontal: 16,
     paddingVertical: 0,
     justifyContent: 'center',
   },
-  closeBtnLabel: {
+  footerBtnLabel: {
     color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 22,
+    fontSize: 18,
+    fontWeight: '500',
   }
 });
