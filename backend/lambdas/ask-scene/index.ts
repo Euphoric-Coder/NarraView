@@ -157,7 +157,7 @@ ${currentSceneLabel}
 Current scene summary:
 ${currentSceneSummary}
 
-Previously revealed context:
+Relevant previously revealed context:
 ${previousScenesText}
 
 Known characters:
@@ -165,9 +165,6 @@ ${knownCharactersText}
 
 Known entities:
 ${knownEntitiesText}
-
-Known events:
-${knownEventsText}
 
 Viewer question:
 ${body.question}`;

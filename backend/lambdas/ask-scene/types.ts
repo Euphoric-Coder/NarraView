@@ -68,3 +68,33 @@ export interface ContextSnapshot {
   knownConcepts: ConceptContext[];
   knownEvents: TimelineEvent[];
 }
+
+export interface TemporalChunk {
+  id: string;
+  contentId: string;
+  sceneId?: string;
+  startTime: number;
+  endTime: number;
+  revealTime: number;
+  type: "scene_summary" | "event" | "transcript" | "character" | "entity" | "concept";
+  text: string;
+  keywords?: string[];
+  importance?: "low" | "medium" | "high";
+  characterIds?: string[];
+  entityIds?: string[];
+  source?: string;
+}
+
+export interface RetrievedChunk extends TemporalChunk {
+  score: number;
+}
+
+export interface RetrievalResult {
+  timestamp: number;
+  query: string;
+  eligibleChunkCount: number;
+  futureExcludedCount: number;
+  retrievedChunks: RetrievedChunk[];
+  compactedText: string;
+  retrievalLatencyMs: number;
+}
