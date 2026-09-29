@@ -11,15 +11,23 @@ interface FocusableButtonProps {
   labelStyle?: any;
   hasTVPreferredFocus?: boolean;
   disabled?: boolean;
+  nextFocusDown?: any;
+  nextFocusUp?: any;
+  nextFocusLeft?: any;
+  nextFocusRight?: any;
 }
 
-export const FocusableButton = ({ label, onPress, style, labelStyle, hasTVPreferredFocus, disabled }: FocusableButtonProps) => {
+export const FocusableButton = ({ label, onPress, style, labelStyle, hasTVPreferredFocus, disabled, nextFocusDown, nextFocusUp, nextFocusLeft, nextFocusRight }: FocusableButtonProps) => {
   const [isFocused, setIsFocused] = useState(false);
 
   return (
     <Pressable
       disabled={disabled}
       hasTVPreferredFocus={hasTVPreferredFocus && !disabled}
+      nextFocusDown={nextFocusDown}
+      nextFocusUp={nextFocusUp}
+      nextFocusLeft={nextFocusLeft}
+      nextFocusRight={nextFocusRight}
       onFocus={() => setIsFocused(true)}
       onBlur={() => setIsFocused(false)}
       onPress={onPress}

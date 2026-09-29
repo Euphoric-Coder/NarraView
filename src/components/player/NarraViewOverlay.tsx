@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { StyleSheet, View, Text, Pressable, ActivityIndicator, Animated, ScrollView, Easing, BackHandler } from 'react-native';
+import { StyleSheet, findNodeHandle, View, Text, Pressable, ActivityIndicator, Animated, ScrollView, Easing, BackHandler, TextInput, Keyboard } from 'react-native';
 // @ts-ignore
 import { TVFocusGuideView } from 'react-native';
 import { FocusableButton } from '../FocusableButton';
@@ -14,7 +14,7 @@ interface NarraViewOverlayProps {
   currentScene?: any;
 }
 
-type OverlayState = 'idle' | 'loading' | 'success' | 'error';
+type OverlayState = 'idle' | 'custom-input' | 'loading' | 'success' | 'error';
 
 const QUICK_ACTIONS = [
   { id: 'action-1', label: 'What happened?', query: 'What just happened in this scene?' },
@@ -24,15 +24,53 @@ const QUICK_ACTIONS = [
   { id: 'action-5', label: 'Context so far', query: 'What do I know about this situation so far?' },
 ];
 
+const QuestionOptionCard = ({ label, onPress, hasTVPreferredFocus, nextFocusDown }: any) => {
+  const [isFocused, setIsFocused] = useState(false);
+  return (
+    <Pressable
+      hasTVPreferredFocus={hasTVPreferredFocus}
+      nextFocusDown={nextFocusDown}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => setIsFocused(false)}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.quickActionBtn,
+        isFocused && styles.quickActionBtnFocused,
+        pressed && styles.quickActionBtnPressed
+      ]}
+    >
+      <Text style={[styles.quickActionLabel, isFocused && styles.quickActionLabelFocused]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+};
+
 export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, currentScene }: NarraViewOverlayProps) => {
   const [fadeAnim] = useState(new Animated.Value(0));
   const [overlayState, setOverlayState] = useState<OverlayState>('idle');
+  const [customQuestion, setCustomQuestion] = useState('');
+  const inputRef = useRef<TextInput>(null);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const activeRequestId = useRef<number>(0);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setIsEditing(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setIsEditing(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
   const [currentQuestion, setCurrentQuestion] = useState<string>('');
   const [currentAnswer, setCurrentAnswer] = useState<string>('');
   const [isAnswerFocused, setIsAnswerFocused] = useState<boolean>(false);
 
   
   const scrollViewRef = useRef<ScrollView>(null);
+  const backBtnRef = useRef<any>(null);
+  const [backBtnNode, setBackBtnNode] = useState<number | null>(null);
   
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -49,6 +87,11 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
   }, []);
 
   const handleBackPress = () => {
+    if (overlayState === 'custom-input') {
+      Keyboard.dismiss();
+      setOverlayState('idle');
+      return;
+    }
     if (overlayState === 'success' || overlayState === 'error') {
       setOverlayState('idle');
       scrollViewRef.current?.scrollTo({ y: 0, animated: true });
@@ -67,6 +110,13 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
     });
   };
 
+  const handleCustomSubmit = () => {
+    if (customQuestion.trim().length === 0) return;
+    Keyboard.dismiss();
+    setIsEditing(false);
+    handleQuerySelect(customQuestion.trim());
+  };
+
   const handleQuerySelect = async (question: string) => {
     setCurrentQuestion(question);
     setOverlayState('loading');
@@ -76,6 +126,7 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
       const response = await askNarraView({ contentId, timestamp: currentTimeSeconds, question, scene: currentScene });
       setCurrentAnswer(response.answer);
       setOverlayState('success');
+      setCustomQuestion('');
     } catch (error) {
       console.error("NarraView API Error:", error);
       setOverlayState('error');
@@ -84,7 +135,7 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
 
   return (
     <Animated.View style={[styles.overlayContainer, { opacity: fadeAnim }]}>
-      <TVFocusGuideView style={styles.panel} autoFocus>
+      <TVFocusGuideView style={styles.panel} autoFocus trapFocus={true}>
         
         {/* Fixed Header */}
         <View style={styles.header}>
@@ -96,7 +147,7 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
               {currentScene ? currentScene.label : 'Understanding Context...'}
             </Text>
             <Text style={styles.timestampText}>
-              {Math.floor(currentTimeSeconds / 60).toString().padStart(2, '0')}:{(currentTimeSeconds % 60).toString().padStart(2, '0')}
+              {Math.floor(Math.max(0, currentTimeSeconds) / 60).toString().padStart(2, '0')}:{Math.floor(Math.max(0, currentTimeSeconds) % 60).toString().padStart(2, '0')}
             </Text>
           </View>
         </View>
@@ -116,15 +167,60 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
                   <Text style={styles.promptText}>Ask about this moment</Text>
                   <View style={styles.actionList}>
                     {QUICK_ACTIONS.map((action, index) => (
-                      <FocusableButton
+                      <QuestionOptionCard
                         key={action.id}
                         label={action.label}
                         hasTVPreferredFocus={index === 0}
                         onPress={() => handleQuerySelect(action.query)}
-                        style={styles.quickActionBtn}
-                        labelStyle={styles.quickActionLabel}
                       />
                     ))}
+                    <View style={{ height: 16 }} />
+                    <QuestionOptionCard
+                      label="Ask another question"
+                      onPress={() => {
+                        setCustomQuestion('');
+                        setOverlayState('custom-input');
+                      }}
+                      nextFocusDown={backBtnNode || undefined}
+                    />
+                  </View>
+                </View>
+              )}
+
+              {overlayState === 'custom-input' && (
+                <View style={styles.customInputState}>
+                  <Text style={styles.promptText}>Type a question about this moment...</Text>
+                  
+                  <TextInput
+                    style={[styles.textInput, isInputFocused && styles.textInputFocused]}
+                    value={customQuestion}
+                    onChangeText={setCustomQuestion}
+                    onFocus={() => setIsInputFocused(true)}
+                    onBlur={() => setIsInputFocused(false)}
+                    placeholder="Why is this suspicious?"
+                    placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                    maxLength={240}
+                    onSubmitEditing={handleCustomSubmit}
+                    returnKeyType="send"
+                    keyboardAppearance="dark"
+                  />
+                  
+                  <View style={styles.customInputActions}>
+                    <FocusableButton
+                      label="Ask"
+                      onPress={handleCustomSubmit}
+                      style={[styles.actionBtn, customQuestion.trim().length === 0 && styles.actionBtnDisabled]}
+                      hasTVPreferredFocus
+                    />
+                    <FocusableButton
+                      label="Cancel"
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        setOverlayState('idle');
+                      }}
+                      style={styles.actionBtn}
+                      nextFocusDown={backBtnNode || undefined}
+                    />
                   </View>
                 </View>
               )}
@@ -190,7 +286,7 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
         </View>
         
         {/* Fixed Footer */}
-        <View style={styles.footer}>
+        <TVFocusGuideView style={styles.footer} autoFocus>
           <View style={styles.footerRow}>
             <FocusableButton 
               label="Back" 
@@ -205,7 +301,7 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
               labelStyle={styles.footerBtnLabel}
             />
           </View>
-        </View>
+        </TVFocusGuideView>
 
       </TVFocusGuideView>
     </Animated.View>
@@ -299,22 +395,43 @@ const styles = StyleSheet.create({
   },
   actionList: {
     gap: 16,
+    paddingHorizontal: 16,
+    marginHorizontal: -16,
+    paddingVertical: 8,
   },
   quickActionBtn: {
     justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 0,
     height: 56, // Compact
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: 'rgba(20, 20, 25, 0.8)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: 8,
   },
+  quickActionBtnFocused: {
+    backgroundColor: 'rgba(40, 40, 48, 0.95)',
+    borderColor: 'rgba(245, 184, 0, 0.8)',
+    transform: [{ scale: 1.02 }],
+    shadowColor: '#F5B800',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  quickActionBtnPressed: {
+    transform: [{ scale: 0.98 }],
+  },
   quickActionLabel: {
+    color: 'rgba(255, 255, 255, 0.8)',
     fontSize: 20,
     fontWeight: '500',
     textAlign: 'left',
     width: '100%',
+  },
+  quickActionLabelFocused: {
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   
   // LOADING State
@@ -383,6 +500,9 @@ const styles = StyleSheet.create({
   },
   followUpList: {
     gap: 16,
+    paddingHorizontal: 16,
+    marginHorizontal: -16,
+    paddingVertical: 8,
   },
   followUpBtn: {
     justifyContent: 'center',
@@ -446,5 +566,32 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.7)',
     fontSize: 18,
     fontWeight: '500',
+  },
+  customInputState: {
+    paddingTop: 8,
+  },
+  textInput: {
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 8,
+    color: '#FFFFFF',
+    fontSize: 22,
+    padding: 16,
+    marginBottom: 24,
+  },
+  textInputFocused: {
+    borderColor: '#F5B800',
+    backgroundColor: 'rgba(245, 184, 0, 0.05)',
+  },
+  customInputActions: {
+    flexDirection: 'row',
+    gap: 16,
+    paddingHorizontal: 16,
+    marginHorizontal: -16,
+    paddingVertical: 8,
+  },
+  actionBtnDisabled: {
+    opacity: 0.5,
   }
 });

@@ -29,6 +29,9 @@ id = "/com.amazon.kepler.w3cmedia_2@IW3cmedia_3"
 [[wants.service]]
 id = "com.amazon.mediametrics.service"
 
+[[wants.service]]
+id = "com.amazon.inputmethod.service"
+
 [[wants.privilege]]
 id = "com.amazon.devconf.privilege.accessibility"
 
