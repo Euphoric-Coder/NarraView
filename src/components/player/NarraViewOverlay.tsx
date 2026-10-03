@@ -15,13 +15,22 @@ interface NarraViewOverlayProps {
 }
 
 type OverlayState = 'idle' | 'custom-input' | 'loading' | 'success' | 'error';
+type NarraViewMode = 'ask' | 'recap' | 'explain_simple' | 'learn';
 
-const QUICK_ACTIONS = [
-  { id: 'action-1', label: 'What happened?', query: 'What just happened in this scene?' },
-  { id: 'action-2', label: 'Why does it matter?', query: 'Why is this moment important to the story?' },
-  { id: 'action-3', label: 'Who\'s involved?', query: 'Who are the characters involved here?' },
-  { id: 'action-4', label: 'Explain simply', query: 'Explain this scene simply.' },
-  { id: 'action-5', label: 'Context so far', query: 'What do I know about this situation so far?' },
+interface Action {
+  id: string;
+  label: string;
+  mode: NarraViewMode;
+  query?: string;
+}
+
+const QUICK_ACTIONS: Action[] = [
+  { id: 'action-recap', label: 'Previously On', mode: 'recap' },
+  { id: 'action-explain', label: 'Explain Simply', mode: 'explain_simple' },
+  { id: 'action-learn', label: 'Learn Mode', mode: 'learn' },
+  { id: 'action-1', label: 'What happened?', mode: 'ask', query: 'What just happened in this scene?' },
+  { id: 'action-2', label: 'Why does it matter?', mode: 'ask', query: 'Why is this moment important to the story?' },
+  { id: 'action-3', label: "Who's involved?", mode: 'ask', query: 'Who are the characters involved here?' },
 ];
 
 const QuestionOptionCard = ({ label, onPress, hasTVPreferredFocus, nextFocusDown }: any) => {
@@ -64,10 +73,11 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
     };
   }, []);
   const [currentQuestion, setCurrentQuestion] = useState<string>('');
-  const [currentAnswer, setCurrentAnswer] = useState<string>('');
+  const [currentResponse, setCurrentResponse] = useState<any>(null);
+  const [pendingMode, setPendingMode] = useState<NarraViewMode>('ask');
+  const [learnFeedback, setLearnFeedback] = useState<string | null>(null);
   const [isAnswerFocused, setIsAnswerFocused] = useState<boolean>(false);
 
-  
   const scrollViewRef = useRef<ScrollView>(null);
   const backBtnRef = useRef<any>(null);
   const [backBtnNode, setBackBtnNode] = useState<number | null>(null);
@@ -114,23 +124,46 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
     if (customQuestion.trim().length === 0) return;
     Keyboard.dismiss();
     setIsEditing(false);
-    handleQuerySelect(customQuestion.trim());
+    handleQuerySelect({ id: 'custom', label: 'Custom', mode: 'ask', query: customQuestion.trim() });
   };
 
-  const handleQuerySelect = async (question: string) => {
-    setCurrentQuestion(question);
+  const handleQuerySelect = async (action: Action) => {
+    const isCustom = action.id === 'custom';
+    const query = action.query || '';
+    
+    setCurrentQuestion(isCustom ? query : action.label);
+    setPendingMode(action.mode);
     setOverlayState('loading');
+    setLearnFeedback(null);
     scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     
+    const requestId = Date.now();
+    activeRequestId.current = requestId;
+
     try {
-      const response = await askNarraView({ contentId, timestamp: currentTimeSeconds, question, scene: currentScene });
-      setCurrentAnswer(response.answer);
-      setOverlayState('success');
-      setCustomQuestion('');
+      const response = await askNarraView({ contentId, timestamp: currentTimeSeconds, mode: action.mode, question: query, scene: currentScene });
+      if (activeRequestId.current === requestId) {
+        // Fallback to the requested mode if backend omitted it
+        setCurrentResponse({
+          ...response,
+          mode: response.mode || action.mode
+        });
+        setOverlayState('success');
+        setCustomQuestion('');
+      }
     } catch (error) {
-      console.error("NarraView API Error:", error);
-      setOverlayState('error');
+      if (activeRequestId.current === requestId) {
+        console.error("NarraView API Error:", error);
+        setOverlayState('error');
+      }
     }
+  };
+
+  const getLoadingText = () => {
+    if (pendingMode === 'recap') return "Recapping what you've seen...";
+    if (pendingMode === 'explain_simple') return "Simplifying this moment...";
+    if (pendingMode === 'learn') return "Building a quick question...";
+    return "Understanding this moment...";
   };
 
   return (
@@ -164,19 +197,19 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
               
               {overlayState === 'idle' && (
                 <View style={styles.idleState}>
-                  <Text style={styles.promptText}>Ask about this moment</Text>
+                  <Text style={styles.promptText}>Explore this moment</Text>
                   <View style={styles.actionList}>
                     {QUICK_ACTIONS.map((action, index) => (
                       <QuestionOptionCard
                         key={action.id}
                         label={action.label}
                         hasTVPreferredFocus={index === 0}
-                        onPress={() => handleQuerySelect(action.query)}
+                        onPress={() => handleQuerySelect(action)}
                       />
                     ))}
                     <View style={{ height: 16 }} />
                     <QuestionOptionCard
-                      label="Ask another question"
+                      label="Ask NarraView"
                       onPress={() => {
                         setCustomQuestion('');
                         setOverlayState('custom-input');
@@ -228,19 +261,23 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
               {overlayState === 'loading' && (
                 <View style={styles.loadingState}>
                   <Text style={styles.loadingDots}>• • •</Text>
-                  <Text style={styles.loadingText}>Understanding this moment...</Text>
+                  <Text style={styles.loadingText}>{getLoadingText()}</Text>
                 </View>
               )}
 
-              {overlayState === 'success' && (
+              {overlayState === 'success' && currentResponse && (
                 <View style={styles.successState}>
-                  <Text style={styles.youAskedLabel}>YOU ASKED</Text>
+                  <Text style={styles.youAskedLabel}>
+                    {currentResponse.mode === 'ask' ? 'YOU ASKED' : 
+                     currentResponse.mode === 'explain_simple' ? 'EXPLAIN SIMPLY' :
+                     currentResponse.mode === 'learn' ? 'LEARN MODE' : 'PREVIOUSLY ON'}
+                  </Text>
                   <Text style={styles.askedQuestionText}>{currentQuestion}</Text>
                   
                   <View style={styles.answerDivider} />
                   
                   <Pressable 
-                    hasTVPreferredFocus
+                    hasTVPreferredFocus={currentResponse.mode !== 'learn' || !!learnFeedback}
                     onFocus={() => setIsAnswerFocused(true)}
                     onBlur={() => setIsAnswerFocused(false)}
                     style={() => [
@@ -249,12 +286,44 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
                     ]}
                   >
                     <Text style={styles.answerBrand}>NARRAVIEW</Text>
-                    <Text style={styles.answerText}>{currentAnswer}</Text>
+                    {currentResponse.mode === 'ask' || currentResponse.mode === 'explain_simple' ? (
+                      <Text style={styles.answerText}>{currentResponse.answer}</Text>
+                    ) : currentResponse.mode === 'recap' ? (
+                      <Text style={styles.answerText}>{currentResponse.recap}</Text>
+                    ) : currentResponse.mode === 'learn' ? (
+                      <View>
+                        <Text style={styles.answerText}>{currentResponse.takeaway}</Text>
+                        <Text style={[styles.answerText, { fontWeight: 'bold' }]}>Quick Check: {currentResponse.question}</Text>
+                        
+                        {!learnFeedback ? (
+                          <View style={styles.actionList}>
+                            {currentResponse.options?.map((opt: any, index: number) => (
+                               <QuestionOptionCard
+                                 key={opt.id}
+                                 label={opt.text}
+                                 hasTVPreferredFocus={index === 0}
+                                 onPress={() => {
+                                   if (opt.id === currentResponse.correctOptionId) {
+                                     setLearnFeedback(`✓ Correct\n\n${currentResponse.explanation}`);
+                                   } else {
+                                     setLearnFeedback(`Not quite\n\n${currentResponse.explanation}`);
+                                   }
+                                 }}
+                               />
+                            ))}
+                          </View>
+                        ) : (
+                          <View style={[styles.answerBlock, { backgroundColor: 'rgba(255,255,255,0.05)', marginTop: 16 }]}>
+                            <Text style={styles.answerText}>{learnFeedback}</Text>
+                          </View>
+                        )}
+                      </View>
+                    ) : null}
                   </Pressable>
                   
                   <View style={styles.followUpList}>
                     <FocusableButton
-                      label="Ask another"
+                      label="Back to actions"
                       onPress={() => setOverlayState('idle')}
                       style={styles.followUpBtn}
                       labelStyle={styles.followUpLabel}
@@ -265,16 +334,16 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
 
               {overlayState === 'error' && (
                 <View style={styles.errorState}>
-                  <Text style={styles.errorText}>Couldn't answer this moment.</Text>
+                  <Text style={styles.errorText}>Couldn't load that right now.</Text>
                   <View style={styles.errorActions}>
                     <FocusableButton 
-                      label="Retry" 
-                      onPress={() => handleQuerySelect(currentQuestion)} 
+                      label="Try Again" 
+                      onPress={() => handleQuerySelect({ id: 'retry', label: currentQuestion, mode: pendingMode, query: currentQuestion })} 
                       style={styles.actionBtn}
                       hasTVPreferredFocus 
                     />
                     <FocusableButton 
-                      label="Back to questions" 
+                      label="Back" 
                       onPress={() => setOverlayState('idle')} 
                       style={styles.actionBtn} 
                     />
@@ -311,17 +380,17 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
 const styles = StyleSheet.create({
   overlayContainer: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)', // Dim background layer
-    justifyContent: 'flex-start', // Allow margin positioning
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'flex-start',
     alignItems: 'flex-start',
   },
   panel: {
-    width: '44%', // Increased width for more horizontal reading space
+    width: '44%',
     minWidth: 480,
-    height: '90%', // Dramatically increased height for maximum content space
-    marginTop: '5%', // Anchored even higher
-    marginLeft: '6%', // Slightly closer to left edge
-    backgroundColor: 'rgba(12, 12, 15, 0.96)', // Dark translucent
+    height: '90%',
+    marginTop: '5%',
+    marginLeft: '6%',
+    backgroundColor: 'rgba(12, 12, 15, 0.96)',
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
@@ -496,7 +565,7 @@ const styles = StyleSheet.create({
     color: '#E0E0E0',
     fontSize: 24,
     lineHeight: 34,
-    marginBottom: 32,
+    marginBottom: 16, // reduced margin to fit learn mode elements
   },
   followUpList: {
     gap: 16,

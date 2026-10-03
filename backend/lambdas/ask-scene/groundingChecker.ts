@@ -6,9 +6,15 @@ export interface Claim {
 }
 
 export interface StructuredResponse {
-  answer: string;
+  answer?: string;
+  recap?: string;
+  takeaway?: string;
+  question?: string;
+  options?: { id: string; text: string }[];
+  correctOptionId?: string;
+  explanation?: string;
   claims: Claim[];
-  unknownsReferenced: string[];
+  unknownsReferenced?: string[];
 }
 
 export interface GroundingValidationResult {
@@ -81,8 +87,8 @@ export const validateGeneratedResponse = (
     if (jsonStart === -1 || jsonEnd === 0) throw new Error("No JSON found");
     const jsonString = modelResponse.substring(jsonStart, jsonEnd);
     structured = JSON.parse(jsonString) as StructuredResponse;
-    if (!structured.answer || !structured.claims) {
-      throw new Error("Missing required JSON fields");
+    if (!structured.claims) {
+      throw new Error("Missing claims field");
     }
   } catch (err) {
     return {
@@ -93,7 +99,14 @@ export const validateGeneratedResponse = (
   }
 
   const violations: string[] = [];
-  const lowerAnswer = structured.answer.toLowerCase();
+  const textToValidate = [
+    structured.answer,
+    structured.recap,
+    structured.takeaway,
+    structured.question,
+    ...(structured.options ? structured.options.map(o => o.text) : []),
+    structured.explanation
+  ].filter(Boolean).join(" ").toLowerCase();
 
   // 1. Validate Evidence References
   for (const claim of structured.claims) {
@@ -125,7 +138,7 @@ export const validateGeneratedResponse = (
   if (storyState.telemetryAlterationActor === null) {
     const actorTerms = ["someone changed", "someone tampered", "they altered", "someone altered", "same person"];
     for (const term of actorTerms) {
-      if (lowerAnswer.includes(term)) violations.push(`UNSUPPORTED_ACTOR (${term})`);
+      if (textToValidate.includes(term)) violations.push(`UNSUPPORTED_ACTOR (${term})`);
     }
   }
 
@@ -133,7 +146,7 @@ export const validateGeneratedResponse = (
   if (storyState.telemetryAlterationIntentional === null) {
     const intentTerms = ["tampered", "tamper", "deliberately changed", "intentionally altered", "deliberate", "intentional"];
     for (const term of intentTerms) {
-      if (lowerAnswer.includes(term)) violations.push(`UNSUPPORTED_INTENT (${term})`);
+      if (textToValidate.includes(term)) violations.push(`UNSUPPORTED_INTENT (${term})`);
     }
   }
 
@@ -141,7 +154,7 @@ export const validateGeneratedResponse = (
   if (storyState.telemetryAlterationMotive === null) {
     const motiveTerms = ["to hide", "to conceal", "to cover up", "to mislead", "hiding"];
     for (const term of motiveTerms) {
-      if (lowerAnswer.includes(term)) violations.push(`UNSUPPORTED_MOTIVE (${term})`);
+      if (textToValidate.includes(term)) violations.push(`UNSUPPORTED_MOTIVE (${term})`);
     }
   }
 
@@ -149,7 +162,7 @@ export const validateGeneratedResponse = (
   if (storyState.coverUpKnown === null) {
     const coverupTerms = ["cover-up", "cover up"];
     for (const term of coverupTerms) {
-      if (lowerAnswer.includes(term)) violations.push(`UNSUPPORTED_COVERUP (${term})`);
+      if (textToValidate.includes(term)) violations.push(`UNSUPPORTED_COVERUP (${term})`);
     }
   }
 
@@ -157,7 +170,7 @@ export const validateGeneratedResponse = (
   if (storyState.sabotageKnown === null) {
     const sabotageTerms = ["sabotage", "foul play"];
     for (const term of sabotageTerms) {
-      if (lowerAnswer.includes(term)) violations.push(`UNSUPPORTED_SABOTAGE (${term})`);
+      if (textToValidate.includes(term)) violations.push(`UNSUPPORTED_SABOTAGE (${term})`);
     }
   }
 
@@ -165,7 +178,7 @@ export const validateGeneratedResponse = (
   if (storyState.telemetryCausedBlackout === null) {
     const causalityTerms = ["caused the blackout", "triggered the outage", "led to the blackout", "caused the outage", "resulted in"];
     for (const term of causalityTerms) {
-      if (lowerAnswer.includes(term)) violations.push(`UNSUPPORTED_CAUSALITY (${term})`);
+      if (textToValidate.includes(term)) violations.push(`UNSUPPORTED_CAUSALITY (${term})`);
     }
   }
 
@@ -174,14 +187,14 @@ export const validateGeneratedResponse = (
   if (storyState.telemetryRelatedToBlackout === null) {
     const connectionTerms = ["are connected", "is connected", "connection", "linked"];
     for (const term of connectionTerms) {
-      if (lowerAnswer.includes(term)) violations.push(`UNSUPPORTED_CONNECTION (${term})`);
+      if (textToValidate.includes(term)) violations.push(`UNSUPPORTED_CONNECTION (${term})`);
     }
   }
 
   // External knowledge bounds
   const externalKnowledgeTerms = ["trustworthy log", "red flag", "standard procedure", "typically", "technical glitch"];
   for (const term of externalKnowledgeTerms) {
-    if (lowerAnswer.includes(term)) violations.push(`UNSUPPORTED_EXTERNAL_KNOWLEDGE (${term})`);
+    if (textToValidate.includes(term)) violations.push(`UNSUPPORTED_EXTERNAL_KNOWLEDGE (${term})`);
   }
 
   if (violations.length > 0) {

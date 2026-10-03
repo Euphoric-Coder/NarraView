@@ -3,7 +3,8 @@ import { API_BASE_URL } from '../config/api';
 export interface AskNarraViewRequest {
   contentId: string;
   timestamp: number;
-  question: string;
+  question?: string;
+  mode?: "ask" | "recap" | "explain_simple" | "learn";
   scene?: {
     startTime: number;
     endTime: number;
@@ -12,7 +13,14 @@ export interface AskNarraViewRequest {
 }
 
 export interface AskNarraViewResponse {
-  answer: string;
+  mode: string;
+  answer?: string;
+  recap?: string;
+  takeaway?: string;
+  question?: string;
+  options?: { id: string; text: string }[];
+  correctOptionId?: string;
+  explanation?: string;
   contentId: string;
   sceneId?: string;
   sceneLabel?: string;
@@ -22,25 +30,17 @@ export interface AskNarraViewResponse {
   source: string;
 }
 
-export const askNarraView = async (request: AskNarraViewRequest, externalSignal?: AbortSignal): Promise<AskNarraViewResponse> => {
+export const askNarraView = async (request: AskNarraViewRequest): Promise<AskNarraViewResponse> => {
   const controller = new AbortController();
-  
-  if (externalSignal) {
-    externalSignal.addEventListener('abort', () => {
-      console.log('[NarraView API] external cancellation requested');
-      controller.abort();
-    });
-  }
-
   const timeoutId = setTimeout(() => {
     console.log('[NarraView API] timeout reached, aborting request');
     controller.abort();
-  }, 10000);
+  }, 12000); // slightly longer timeout for robust reasoning
 
   const endpoint = `${API_BASE_URL}/ai/ask`;
 
   console.log(`[NarraView API] endpoint: ${endpoint}`);
-  console.log(`[NarraView API] request:\\ncontent=${request.contentId}\\ntime=${request.timestamp}\\nquestion=${request.question}\\nscene=${request.scene?.label}`);
+  console.log(`[NarraView API] request:\\ncontent=${request.contentId}\\ntime=${request.timestamp}\\nmode=${request.mode}\\nquestion=${request.question}\\nscene=${request.scene?.label}`);
 
   let response: Response;
   try {
@@ -63,7 +63,6 @@ export const askNarraView = async (request: AskNarraViewRequest, externalSignal?
   console.log('[NarraView API] fetch returned');
   console.log('[NarraView API] status:', response.status);
   console.log('[NarraView API] ok:', response.ok);
-  console.log('[NarraView API] content-type:', response.headers?.get?.('content-type') || response.headers?.get?.('Content-Type'));
 
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`);
@@ -91,14 +90,7 @@ export const askNarraView = async (request: AskNarraViewRequest, externalSignal?
     }
   }
 
-  // Minimum success requirement
-  if (typeof data?.answer !== 'string') {
-    console.error('[NarraView API] invalid response format, missing answer string', data);
-    throw new Error('NarraView API returned invalid response format');
-  }
-
   console.log('[NarraView API] response source:', data.source);
-  console.log('[NarraView API] returning answer:', data.answer);
   
   return data as AskNarraViewResponse;
 };
