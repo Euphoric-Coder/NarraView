@@ -28,9 +28,6 @@ const QUICK_ACTIONS: Action[] = [
   { id: 'action-1', label: 'What happened?', mode: 'ask', query: 'What just happened in this scene?' },
   { id: 'action-2', label: 'Why does it matter?', mode: 'ask', query: 'Why is this moment important to the story?' },
   { id: 'action-3', label: "Who's involved?", mode: 'ask', query: 'Who are the characters involved here?' },
-  { id: 'action-recap', label: 'Previously On', mode: 'recap' },
-  { id: 'action-explain', label: 'Explain Simply', mode: 'explain_simple' },
-  { id: 'action-learn', label: 'Learn Mode', mode: 'learn' },
 ];
 
 const QuestionOptionCard = ({ label, onPress, hasTVPreferredFocus, nextFocusDown }: any) => {
@@ -49,6 +46,27 @@ const QuestionOptionCard = ({ label, onPress, hasTVPreferredFocus, nextFocusDown
       ]}
     >
       <Text style={[styles.quickActionLabel, isFocused && styles.quickActionLabelFocused]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+};
+
+const CompactOptionCard = ({ label, onPress, hasTVPreferredFocus }: any) => {
+  const [isFocused, setIsFocused] = useState(false);
+  return (
+    <Pressable
+      hasTVPreferredFocus={hasTVPreferredFocus}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => setIsFocused(false)}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.compactActionBtn,
+        isFocused && styles.quickActionBtnFocused, // reuse amber glow
+        pressed && styles.quickActionBtnPressed
+      ]}
+    >
+      <Text style={[styles.compactActionLabel, isFocused && styles.quickActionLabelFocused]}>
         {label}
       </Text>
     </Pressable>
@@ -220,7 +238,6 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
                   <View style={styles.actionList}>
                     {QUICK_ACTIONS.map((action, index) => (
                       <React.Fragment key={action.id}>
-                        {action.id === 'action-recap' && <View style={styles.actionDivider} />}
                         <QuestionOptionCard
                           label={action.label}
                           hasTVPreferredFocus={lastSelectedActionId ? action.id === lastSelectedActionId : index === 0}
@@ -289,41 +306,49 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
               {overlayState === 'success' && currentResponse && (
                 <View style={styles.successState}>
                   {currentResponse.mode === 'ask' || !currentResponse.mode ? (
-                    <>
+                    <View style={styles.modeHeaderBlock}>
                       <Text style={styles.youAskedLabel}>YOU ASKED</Text>
                       <Text style={styles.askedQuestionText}>{currentQuestion}</Text>
-                      <View style={styles.answerDivider} />
-                      <Pressable 
-                        hasTVPreferredFocus
-                        onFocus={() => setIsAnswerFocused(true)}
-                        onBlur={() => setIsAnswerFocused(false)}
-                        style={() => [
-                          styles.answerBlock,
-                          isAnswerFocused && styles.answerBlockFocused
-                        ]}
-                      >
-                        <Text style={styles.answerBrand}>NARRAVIEW</Text>
-                        <Text style={styles.answerText}>{currentResponse.answer}</Text>
-                      </Pressable>
-                    </>
+                    </View>
+                  ) : (
+                    <View style={styles.modeHeaderBlock}>
+                      <Text style={styles.modeLabel}>
+                        {currentResponse.mode === 'recap' ? 'PREVIOUSLY ON' :
+                         currentResponse.mode === 'explain_simple' ? 'EXPLAIN SIMPLY' : 'LEARN MODE'}
+                      </Text>
+                      {currentResponse.mode === 'recap' && <Text style={styles.modeSubtitle}>Recap so far</Text>}
+                      {currentResponse.mode === 'explain_simple' && <Text style={styles.modeSubtitle}>In plain language</Text>}
+                      {currentResponse.mode === 'learn' && <Text style={styles.modeSubtitle}>Quick comprehension</Text>}
+                    </View>
+                  )}
+                  
+                  <View style={styles.answerDivider} />
+                  
+                  {currentResponse.mode === 'ask' || !currentResponse.mode ? (
+                    <Pressable 
+                      hasTVPreferredFocus
+                      onFocus={() => setIsAnswerFocused(true)}
+                      onBlur={() => setIsAnswerFocused(false)}
+                      style={() => [
+                        styles.answerBlock,
+                        isAnswerFocused && styles.answerBlockFocused
+                      ]}
+                    >
+                      <Text style={styles.answerText}>{currentResponse.answer}</Text>
+                    </Pressable>
                   ) : currentResponse.mode === 'recap' ? (
                     <View style={styles.modeContentBlock}>
-                      <Text style={styles.modeLabel}>PREVIOUSLY ON</Text>
                       <Text style={[styles.answerText, styles.recapText]}>{currentResponse.recap}</Text>
                     </View>
                   ) : currentResponse.mode === 'explain_simple' ? (
                     <View style={styles.modeContentBlock}>
-                      <Text style={styles.modeLabel}>EXPLAIN SIMPLY</Text>
-                      <Text style={styles.modeSubtitle}>In plain language</Text>
                       <Text style={[styles.answerText, styles.explainText]}>{currentResponse.answer}</Text>
                     </View>
                   ) : currentResponse.mode === 'learn' ? (
                     <View style={styles.modeContentBlock}>
-                      <Text style={styles.modeLabel}>LEARN MODE</Text>
-                      
                       <View style={styles.takeawaySection}>
                         <Text style={styles.sectionEyebrow}>TAKEAWAY</Text>
-                        <Text style={styles.takeawayText} numberOfLines={2}>{currentResponse.takeaway}</Text>
+                        <Text style={styles.takeawayText}>{currentResponse.takeaway}</Text>
                       </View>
 
                       <View style={styles.quizSection}>
@@ -396,6 +421,25 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
         
         {/* Fixed Footer */}
         <TVFocusGuideView style={styles.footer} autoFocus>
+          {overlayState === 'idle' && (
+            <View style={styles.footerToolsRow}>
+              <CompactOptionCard 
+                label="Previously On" 
+                onPress={() => handleQuerySelect({ id: 'action-recap', label: 'Previously On', mode: 'recap' })}
+                hasTVPreferredFocus={lastSelectedActionId === 'action-recap'}
+              />
+              <CompactOptionCard 
+                label="Explain Simply" 
+                onPress={() => handleQuerySelect({ id: 'action-explain', label: 'Explain Simply', mode: 'explain_simple' })}
+                hasTVPreferredFocus={lastSelectedActionId === 'action-explain'}
+              />
+              <CompactOptionCard 
+                label="Learn Mode" 
+                onPress={() => handleQuerySelect({ id: 'action-learn', label: 'Learn Mode', mode: 'learn' })}
+                hasTVPreferredFocus={lastSelectedActionId === 'action-learn'}
+              />
+            </View>
+          )}
           <View style={styles.footerRow}>
             <FocusableButton 
               label="Back" 
@@ -575,7 +619,6 @@ const styles = StyleSheet.create({
   askedQuestionText: {
     color: '#FFFFFF',
     fontSize: 22,
-    marginBottom: 28,
   },
   answerDivider: {
     height: 1,
@@ -653,12 +696,34 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   
-  // Footer
   footer: {
     marginTop: 16,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
     paddingTop: 16,
+  },
+  footerToolsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+    width: '100%',
+  },
+  compactActionBtn: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 12,
+    minHeight: 48,
+    backgroundColor: 'rgba(20, 20, 25, 0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 8,
+  },
+  compactActionLabel: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   footerRow: {
     flexDirection: 'row',
@@ -708,21 +773,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
     marginVertical: 12,
   },
+  modeHeaderBlock: {
+    marginBottom: 20,
+  },
   modeContentBlock: {
-    paddingVertical: 8,
+    paddingVertical: 0,
   },
   modeLabel: {
     color: '#F5B800',
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: '700',
     letterSpacing: 1,
     textTransform: 'uppercase',
-    marginBottom: 8,
   },
   modeSubtitle: {
     color: 'rgba(255, 255, 255, 0.5)',
     fontSize: 16,
-    marginBottom: 16,
+    marginTop: 6,
   },
   recapText: {
     marginTop: 8,
@@ -732,7 +799,6 @@ const styles = StyleSheet.create({
   },
   takeawaySection: {
     marginBottom: 32,
-    marginTop: 16,
   },
   sectionEyebrow: {
     color: 'rgba(255, 255, 255, 0.5)',
