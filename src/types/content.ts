@@ -13,9 +13,12 @@ export interface ContentItem {
   year: number;
   progress?: number;
   posterColor: string;
+  posterUrl?: string;
   videoSource?: string;
   durationSeconds?: number;
   scenes?: ContentScene[];
+  aiReady?: boolean;
+  mediaPlayable?: boolean;
 }
 
 export interface ContentCategory {

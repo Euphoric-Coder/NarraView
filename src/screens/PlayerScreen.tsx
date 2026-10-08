@@ -243,7 +243,25 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
         />
       </View>
 
-      {isNarraViewOpen && (
+      {isNarraViewOpen && item.aiReady === false ? (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(10,10,12,0.95)', justifyContent: 'center', alignItems: 'center', zIndex: 100 }]}>
+          <Text style={{ color: '#F5B800', fontSize: 32, fontWeight: '700', letterSpacing: 2, marginBottom: 16 }}>NARRAVIEW</Text>
+          <Text style={{ color: '#ffffff', fontSize: 20, opacity: 0.8, marginBottom: 48 }}>NarraView intelligence for this title is still being prepared.</Text>
+          <FocusableButton 
+            label="Back to Video" 
+            onPress={handleCloseNarraView} 
+            hasTVPreferredFocus 
+            style={({focused}: any) => ({
+              paddingHorizontal: 32,
+              paddingVertical: 16,
+              backgroundColor: focused ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)',
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: focused ? '#F5B800' : 'rgba(255,255,255,0.1)'
+            })}
+          />
+        </View>
+      ) : isNarraViewOpen ? (
         <NarraViewOverlay
           contentId={item.id}
           currentTimeSeconds={currentTimeSeconds}
@@ -251,7 +269,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
           onClose={handleCloseNarraView}
           contextTimestamp={frozenTimestamp}
         />
-      )}
+      ) : null}
     </View>
   );
 };
