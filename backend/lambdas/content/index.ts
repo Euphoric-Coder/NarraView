@@ -1,12 +1,13 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, GetCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { TranscribeClient, StartTranscriptionJobCommand } from "@aws-sdk/client-transcribe";
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 const s3Client = new S3Client({});
+const transcribeClient = new TranscribeClient({});
 
 const TABLE_NAME = process.env.TABLE_NAME || '';
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
@@ -58,6 +59,23 @@ export const handler = async (event: any) => {
       }
       
       return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify(item) };
+    }
+    
+    if (path === '/content/{contentId}/transcript' && method === 'GET') {
+      const contentId = event.pathParameters.contentId;
+      const key = `content/${contentId}/transcripts/normalized/transcript.json`;
+      
+      try {
+        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
+        const res = await s3Client.send(command);
+        const bodyStr = await res.Body?.transformToString();
+        return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
+      } catch (err: any) {
+        if (err.name === 'NoSuchKey') {
+          return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcript not found' }) };
+        }
+        throw err;
+      }
     }
     
     // Write operations require admin token
@@ -116,6 +134,52 @@ export const handler = async (event: any) => {
       
       await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
       return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify(updated) };
+    }
+    
+    if (path === '/content/{contentId}/transcribe' && method === 'POST') {
+      const contentId = event.pathParameters.contentId;
+      
+      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = check.Item;
+      if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
+      
+      if (!item.mediaPlayable || !item.videoUrl || !item.videoUrl.startsWith('s3://')) {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Media not playable or not hosted on S3' }) };
+      }
+      
+      if (item.processing?.transcriptionStatus === 'queued' || item.processing?.transcriptionStatus === 'processing') {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription already in progress' }) };
+      }
+      
+      const jobName = `narraview-${contentId}-${Date.now()}`.replace(/[^a-zA-Z0-9-_.!*'()]/g, '-');
+      let languageCode = 'en-US';
+      if (item.language === 'en') languageCode = 'en-US';
+      if (item.language === 'es') languageCode = 'es-US';
+      // Expand as needed
+      
+      const startCommand = new StartTranscriptionJobCommand({
+        TranscriptionJobName: jobName,
+        LanguageCode: languageCode,
+        MediaFormat: 'mp4',
+        Media: {
+          MediaFileUri: item.videoUrl
+        }
+      });
+      
+      await transcribeClient.send(startCommand);
+      
+      const updated = {
+        ...item,
+        processing: {
+          ...item.processing,
+          transcriptionStatus: 'queued'
+        },
+        updatedAt: new Date().toISOString()
+      };
+      
+      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+      
+      return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued', jobName }) };
     }
     
     if (path === '/content/upload-url' && method === 'POST') {

@@ -5,6 +5,7 @@
 .vscode
 .tmp
 
+*.mp4
 dist
 build
 node_modules

@@ -6,6 +6,8 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as path from 'path';
 
 export class CdkStack extends cdk.Stack {
@@ -62,6 +64,48 @@ export class CdkStack extends cdk.Stack {
     contentTable.grantReadWriteData(contentLambda);
     mediaBucket.grantPut(contentLambda); // To generate presigned URLs for upload
     mediaBucket.grantRead(contentLambda); // To generate presigned URLs for playback
+
+    // Grant Transcribe Start permission
+    contentLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['transcribe:StartTranscriptionJob'],
+      resources: ['*'] // StartTranscriptionJob doesn't support resource-level ARNs
+    }));
+
+    // Transcription Completion Lambda Function
+    const transcriptionCompletionLambda = new NodejsFunction(this, 'TranscriptionCompletionLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: path.join(__dirname, '../../../backend/lambdas/transcription-completion/index.ts'),
+      handler: 'handler',
+      projectRoot: path.join(__dirname, '../../../'),
+      logRetention: cdk.aws_logs.RetentionDays.ONE_WEEK,
+      timeout: cdk.Duration.seconds(120),
+      environment: {
+        TABLE_NAME: contentTable.tableName,
+        BUCKET_NAME: mediaBucket.bucketName,
+      }
+    });
+
+    // Permissions for Transcription Completion Lambda
+    contentTable.grantReadWriteData(transcriptionCompletionLambda);
+    mediaBucket.grantReadWrite(transcriptionCompletionLambda);
+    transcriptionCompletionLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['transcribe:GetTranscriptionJob'],
+      resources: ['*']
+    }));
+
+    // EventBridge Rule for Transcribe state changes
+    const transcribeEventRule = new events.Rule(this, 'TranscribeJobStateChangeRule', {
+      eventPattern: {
+        source: ['aws.transcribe'],
+        detailType: ['Transcribe Job State Change'],
+        detail: {
+          TranscriptionJobStatus: ['COMPLETED', 'FAILED']
+        }
+      }
+    });
+    transcribeEventRule.addTarget(new targets.LambdaFunction(transcriptionCompletionLambda));
 
     // Lambda Function
     const askSceneLambda = new NodejsFunction(this, 'AskSceneLambda', {
@@ -128,6 +172,12 @@ export class CdkStack extends cdk.Stack {
     const contentIdResource = contentResource.addResource('{contentId}');
     contentIdResource.addMethod('GET', contentIntegration);
     contentIdResource.addMethod('PATCH', contentIntegration);
+    
+    const transcribeResource = contentIdResource.addResource('transcribe');
+    transcribeResource.addMethod('POST', contentIntegration);
+    
+    const transcriptResource = contentIdResource.addResource('transcript');
+    transcriptResource.addMethod('GET', contentIntegration);
     
     const uploadUrlResource = contentResource.addResource('upload-url');
     uploadUrlResource.addMethod('POST', contentIntegration);
