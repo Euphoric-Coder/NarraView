@@ -143,6 +143,40 @@ export class CdkStack extends cdk.Stack {
       resources: ['*']
     }));
 
+    // Segmentation Worker Lambda Function
+    const segmentationWorkerLambda = new NodejsFunction(this, 'SegmentationWorkerLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: path.join(__dirname, '../../../backend/lambdas/segmentation-worker/index.ts'),
+      handler: 'handler',
+      projectRoot: path.join(__dirname, '../../../'),
+      logRetention: cdk.aws_logs.RetentionDays.ONE_WEEK,
+      timeout: cdk.Duration.seconds(300), // Max 5 mins for GPT OSS
+      bundling: {
+        nodeModules: ['openai', '@aws/bedrock-token-generator']
+      },
+      environment: {
+        TABLE_NAME: contentTable.tableName,
+        BUCKET_NAME: mediaBucket.bucketName,
+        BEDROCK_MANTLE_BASE_URL: 'https://bedrock-mantle.eu-north-1.api.aws/v1',
+      }
+    });
+
+    // Permissions for Segmentation Worker Lambda
+    contentTable.grantReadWriteData(segmentationWorkerLambda);
+    mediaBucket.grantReadWrite(segmentationWorkerLambda);
+    segmentationWorkerLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock-mantle:CreateInference',
+        'bedrock-mantle:CallWithBearerToken'
+      ],
+      resources: ['*']
+    }));
+
+    // Add Env to Content Lambda
+    contentLambda.addEnvironment('SEGMENTATION_WORKER_FUNCTION_NAME', segmentationWorkerLambda.functionName);
+    segmentationWorkerLambda.grantInvoke(contentLambda);
+
     // API Gateway REST API
     const api = new apigateway.RestApi(this, 'NarraViewApi', {
       restApiName: 'NarraView API',
@@ -181,6 +215,11 @@ export class CdkStack extends cdk.Stack {
     
     const uploadUrlResource = contentResource.addResource('upload-url');
     uploadUrlResource.addMethod('POST', contentIntegration);
+    
+    const segmentsResource = contentIdResource.addResource('segments');
+    segmentsResource.addMethod('GET', contentIntegration);
+    const detectSegmentsResource = segmentsResource.addResource('detect');
+    detectSegmentsResource.addMethod('POST', contentIntegration);
     
     const posterUploadUrlResource = contentResource.addResource('poster-upload-url');
     posterUploadUrlResource.addMethod('POST', contentIntegration);

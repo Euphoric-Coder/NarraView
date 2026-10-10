@@ -202,6 +202,61 @@ export const handler = async (event: any) => {
       return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify({ uploadUrl, key, url: `s3://${BUCKET_NAME}/${key}` }) };
     }
     
+    if (path === '/content/{contentId}/segments/detect' && method === 'POST') {
+      const contentId = event.pathParameters.contentId;
+      
+      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = check.Item;
+      if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
+      
+      if (item.processing?.transcriptionStatus !== 'complete') {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription must be complete before segment detection' }) };
+      }
+      
+      if (item.processing?.sceneDetectionStatus === 'queued' || item.processing?.sceneDetectionStatus === 'processing') {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Segment detection already in progress' }) };
+      }
+      
+      const updated = {
+        ...item,
+        processing: {
+          ...item.processing,
+          sceneDetectionStatus: 'queued'
+        },
+        updatedAt: new Date().toISOString()
+      };
+      
+      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+      
+      const lambdaClient = new (require('@aws-sdk/client-lambda').LambdaClient)({});
+      const invokeCommand = new (require('@aws-sdk/client-lambda').InvokeCommand)({
+        FunctionName: process.env.SEGMENTATION_WORKER_FUNCTION_NAME,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ contentId }))
+      });
+      
+      await lambdaClient.send(invokeCommand);
+      
+      return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued' }) };
+    }
+    
+    if (path === '/content/{contentId}/segments' && method === 'GET') {
+      const contentId = event.pathParameters.contentId;
+      const key = `content/${contentId}/segments/segments.json`;
+      
+      try {
+        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
+        const res = await s3Client.send(command);
+        const bodyStr = await res.Body?.transformToString();
+        return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
+      } catch (err: any) {
+        if (err.name === 'NoSuchKey') {
+          return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Segments not found' }) };
+        }
+        throw err;
+      }
+    }
+    
   } catch (error: any) {
     console.error(error);
     return { statusCode: 500, headers: corsHeaders(), body: JSON.stringify({ error: 'Internal server error' }) };

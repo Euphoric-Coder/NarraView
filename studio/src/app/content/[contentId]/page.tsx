@@ -19,7 +19,23 @@ function ContentDetailInner() {
     fetchDetail();
   }, [contentId]);
 
-  const fetchDetail = async () => {
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (content) {
+      const isTranscriptionRunning = content.processing?.transcriptionStatus === 'queued' || content.processing?.transcriptionStatus === 'processing';
+      const isSceneDetectionRunning = content.processing?.sceneDetectionStatus === 'queued' || content.processing?.sceneDetectionStatus === 'processing';
+      
+      if (isTranscriptionRunning || isSceneDetectionRunning) {
+        interval = setInterval(() => {
+          fetchDetail(true);
+        }, 5000);
+      }
+    }
+    return () => clearInterval(interval);
+  }, [content, contentId]);
+
+  const fetchDetail = async (isSilent = false) => {
+    if (!isSilent) setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/content/${contentId}`, {
         headers: {
@@ -30,11 +46,13 @@ function ContentDetailInner() {
       const data = await res.json();
       setContent(data);
     } catch (err: any) {
-      setError(err.message);
+      if (!isSilent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!isSilent) setLoading(false);
     }
   };
+
+  const [startingSegmentation, setStartingSegmentation] = useState(false);
 
   const startTranscription = async () => {
     if (!confirm("Are you sure you want to start transcription for this media?")) return;
@@ -55,6 +73,28 @@ function ContentDetailInner() {
       alert(`Error: ${err.message}`);
     } finally {
       setStartingTranscription(false);
+    }
+  };
+
+  const startSegmentation = async () => {
+    if (!confirm("Start Scene/Segment detection for this media?")) return;
+    setStartingSegmentation(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/content/${contentId}/segments/detect`, {
+        method: 'POST',
+        headers: {
+          'X-Admin-Token': ADMIN_TOKEN
+        }
+      });
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Failed to start segmentation");
+      }
+      await fetchDetail();
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setStartingSegmentation(false);
     }
   };
 
@@ -234,7 +274,36 @@ function ContentDetailInner() {
                   )
                 }
               />
-              <TimelineItem label="Scene Boundary Detection" status={content.processing?.sceneDetectionStatus === 'not_started' ? "Not Started" : content.processing?.sceneDetectionStatus} />
+              <TimelineItem 
+                label="Scene Boundary Detection" 
+                status={content.processing?.sceneDetectionStatus === 'not_started' ? "Not Started" : content.processing?.sceneDetectionStatus}
+                active={content.processing?.sceneDetectionStatus === 'complete' || content.processing?.sceneDetectionStatus === 'processing'}
+                action={
+                  (content.processing?.sceneDetectionStatus === 'not_started' || content.processing?.sceneDetectionStatus === 'failed') ? (
+                    <button 
+                      onClick={startSegmentation} 
+                      disabled={startingSegmentation || content.processing?.transcriptionStatus !== 'complete'}
+                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
+                    >
+                      {startingSegmentation && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
+                      {startingSegmentation ? 'Initializing...' : content.processing?.sceneDetectionStatus === 'failed' ? 'Restart Process' : 'Execute Job'}
+                    </button>
+                  ) : content.processing?.sceneDetectionStatus === 'complete' ? (
+                    <Link 
+                      href={`/content/${contentId}/segments`} 
+                      className="ml-4 text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
+                    >
+                      View Segments
+                      <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    </Link>
+                  ) : (
+                    <div className="ml-4 text-xs font-mono text-white/40 flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-white/40 animate-pulse" />
+                      Running
+                    </div>
+                  )
+                }
+              />
               <TimelineItem label="Knowledge Graph Extraction" status={content.processing?.metadataExtractionStatus === 'not_started' ? "Not Started" : content.processing?.metadataExtractionStatus} />
               
               <div className="pt-4 border-t border-white/5">
