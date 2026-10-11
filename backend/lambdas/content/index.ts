@@ -77,11 +77,70 @@ export const handler = async (event: any) => {
         throw err;
       }
     }
+
+    if (path === '/content/{contentId}/transcript/corrected' && method === 'GET') {
+      const contentId = event.pathParameters.contentId;
+      const key = `content/${contentId}/transcripts/corrected/transcript.json`;
+      
+      try {
+        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
+        const res = await s3Client.send(command);
+        const bodyStr = await res.Body?.transformToString();
+        return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
+      } catch (err: any) {
+        if (err.name === 'NoSuchKey') {
+          return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Corrected transcript not found' }) };
+        }
+        throw err;
+      }
+    }
     
     // Write operations require admin token
     const authHeader = event.headers['x-admin-token'] || event.headers['X-Admin-Token'];
     if (authHeader !== 'narraview-admin-token') {
       return { statusCode: 401, headers: corsHeaders(), body: JSON.stringify({ error: 'Unauthorized' }) };
+    }
+
+    if (path === '/content/{contentId}/transcript/correct' && method === 'POST') {
+      const contentId = event.pathParameters.contentId;
+      
+      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = check.Item;
+      if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
+      
+      if (item.processing?.transcriptionStatus !== 'complete') {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription must be complete before transcript correction' }) };
+      }
+      
+      if (item.processing?.transcriptCorrectionStatus === 'queued' || item.processing?.transcriptCorrectionStatus === 'processing') {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcript correction already in progress' }) };
+      }
+      
+      const updated = {
+        ...item,
+        processing: {
+          ...item.processing,
+          transcriptCorrectionStatus: 'queued'
+        },
+        transcriptCorrection: {
+          status: 'queued',
+          startedAt: new Date().toISOString()
+        },
+        updatedAt: new Date().toISOString()
+      };
+      
+      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+      
+      const lambdaClient = new (require('@aws-sdk/client-lambda').LambdaClient)({});
+      const invokeCommand = new (require('@aws-sdk/client-lambda').InvokeCommand)({
+        FunctionName: process.env.TRANSCRIPT_CORRECTION_WORKER_FUNCTION_NAME,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ contentId }))
+      });
+      
+      await lambdaClient.send(invokeCommand);
+      
+      return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued' }) };
     }
     
     if (path === '/content' && method === 'POST') {
@@ -252,6 +311,78 @@ export const handler = async (event: any) => {
       } catch (err: any) {
         if (err.name === 'NoSuchKey') {
           return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Segments not found' }) };
+        }
+        throw err;
+      }
+    }
+
+    if (path === '/content/{contentId}/knowledge/extract' && method === 'POST') {
+      const contentId = event.pathParameters.contentId;
+      
+      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = check.Item;
+      if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
+      
+      if (item.processing?.transcriptionStatus !== 'complete' || item.processing?.sceneDetectionStatus !== 'complete') {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription and scene detection must be complete before knowledge extraction' }) };
+      }
+      
+      if (item.processing?.metadataExtractionStatus === 'queued' || item.processing?.metadataExtractionStatus === 'processing') {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Knowledge extraction already in progress' }) };
+      }
+      
+      const updated = {
+        ...item,
+        processing: {
+          ...item.processing,
+          metadataExtractionStatus: 'queued'
+        },
+        updatedAt: new Date().toISOString()
+      };
+      
+      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+      
+      const lambdaClient = new (require('@aws-sdk/client-lambda').LambdaClient)({});
+      const invokeCommand = new (require('@aws-sdk/client-lambda').InvokeCommand)({
+        FunctionName: process.env.KNOWLEDGE_WORKER_FUNCTION_NAME,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ contentId }))
+      });
+      
+      await lambdaClient.send(invokeCommand);
+      
+      return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued' }) };
+    }
+
+    if (path === '/content/{contentId}/knowledge' && method === 'GET') {
+      const contentId = event.pathParameters.contentId;
+      const key = `content/${contentId}/knowledge/knowledge.json`;
+      
+      try {
+        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
+        const res = await s3Client.send(command);
+        const bodyStr = await res.Body?.transformToString();
+        return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
+      } catch (err: any) {
+        if (err.name === 'NoSuchKey') {
+          return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Knowledge not found' }) };
+        }
+        throw err;
+      }
+    }
+
+    if (path === '/content/{contentId}/segments/{segmentId}/knowledge' && method === 'GET') {
+      const { contentId, segmentId } = event.pathParameters;
+      const key = `content/${contentId}/knowledge/segments/${segmentId}.json`;
+      
+      try {
+        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
+        const res = await s3Client.send(command);
+        const bodyStr = await res.Body?.transformToString();
+        return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
+      } catch (err: any) {
+        if (err.name === 'NoSuchKey') {
+          return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Segment knowledge not found' }) };
         }
         throw err;
       }

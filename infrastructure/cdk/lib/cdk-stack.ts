@@ -177,6 +177,70 @@ export class CdkStack extends cdk.Stack {
     contentLambda.addEnvironment('SEGMENTATION_WORKER_FUNCTION_NAME', segmentationWorkerLambda.functionName);
     segmentationWorkerLambda.grantInvoke(contentLambda);
 
+    // Knowledge Extraction Worker Lambda Function
+    const knowledgeExtractionWorkerLambda = new NodejsFunction(this, 'KnowledgeExtractionWorkerLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: path.join(__dirname, '../../../backend/lambdas/knowledge-worker/index.ts'),
+      handler: 'handler',
+      projectRoot: path.join(__dirname, '../../../'),
+      logRetention: cdk.aws_logs.RetentionDays.ONE_WEEK,
+      timeout: cdk.Duration.seconds(300), // Max 5 mins
+      bundling: {
+        nodeModules: ['openai', '@aws/bedrock-token-generator']
+      },
+      environment: {
+        TABLE_NAME: contentTable.tableName,
+        BUCKET_NAME: mediaBucket.bucketName,
+        BEDROCK_MANTLE_BASE_URL: 'https://bedrock-mantle.eu-north-1.api.aws/v1',
+      }
+    });
+
+    contentTable.grantReadWriteData(knowledgeExtractionWorkerLambda);
+    mediaBucket.grantReadWrite(knowledgeExtractionWorkerLambda);
+    knowledgeExtractionWorkerLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock-mantle:CreateInference',
+        'bedrock-mantle:CallWithBearerToken'
+      ],
+      resources: ['*']
+    }));
+
+    // Transcript Correction Worker Lambda Function
+    const transcriptCorrectionWorkerLambda = new NodejsFunction(this, 'TranscriptCorrectionWorkerLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: path.join(__dirname, '../../../backend/lambdas/transcript-correction-worker/index.ts'),
+      handler: 'handler',
+      projectRoot: path.join(__dirname, '../../../'),
+      logRetention: cdk.aws_logs.RetentionDays.ONE_WEEK,
+      timeout: cdk.Duration.seconds(300), // Max 5 mins
+      bundling: {
+        nodeModules: ['openai', '@aws/bedrock-token-generator']
+      },
+      environment: {
+        TABLE_NAME: contentTable.tableName,
+        BUCKET_NAME: mediaBucket.bucketName,
+        BEDROCK_MANTLE_BASE_URL: 'https://bedrock-mantle.eu-north-1.api.aws/v1',
+      }
+    });
+
+    contentTable.grantReadWriteData(transcriptCorrectionWorkerLambda);
+    mediaBucket.grantReadWrite(transcriptCorrectionWorkerLambda);
+    transcriptCorrectionWorkerLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock-mantle:CreateInference',
+        'bedrock-mantle:CallWithBearerToken'
+      ],
+      resources: ['*']
+    }));
+
+    contentLambda.addEnvironment('TRANSCRIPT_CORRECTION_WORKER_FUNCTION_NAME', transcriptCorrectionWorkerLambda.functionName);
+    transcriptCorrectionWorkerLambda.grantInvoke(contentLambda);
+
+    contentLambda.addEnvironment('KNOWLEDGE_WORKER_FUNCTION_NAME', knowledgeExtractionWorkerLambda.functionName);
+    knowledgeExtractionWorkerLambda.grantInvoke(contentLambda);
+
     // API Gateway REST API
     const api = new apigateway.RestApi(this, 'NarraViewApi', {
       restApiName: 'NarraView API',
@@ -212,6 +276,10 @@ export class CdkStack extends cdk.Stack {
     
     const transcriptResource = contentIdResource.addResource('transcript');
     transcriptResource.addMethod('GET', contentIntegration);
+    const correctTranscriptResource = transcriptResource.addResource('correct');
+    correctTranscriptResource.addMethod('POST', contentIntegration);
+    const correctedTranscriptResource = transcriptResource.addResource('corrected');
+    correctedTranscriptResource.addMethod('GET', contentIntegration);
     
     const uploadUrlResource = contentResource.addResource('upload-url');
     uploadUrlResource.addMethod('POST', contentIntegration);
@@ -223,6 +291,16 @@ export class CdkStack extends cdk.Stack {
     
     const posterUploadUrlResource = contentResource.addResource('poster-upload-url');
     posterUploadUrlResource.addMethod('POST', contentIntegration);
+
+    // Knowledge API
+    const knowledgeResource = contentIdResource.addResource('knowledge');
+    knowledgeResource.addMethod('GET', contentIntegration);
+    const extractKnowledgeResource = knowledgeResource.addResource('extract');
+    extractKnowledgeResource.addMethod('POST', contentIntegration);
+    
+    // Segment specific knowledge API
+    const segmentKnowledgeResource = segmentsResource.addResource('{segmentId}').addResource('knowledge');
+    segmentKnowledgeResource.addMethod('GET', contentIntegration);
 
     // Outputs
     new cdk.CfnOutput(this, 'NarraViewApiUrl', {

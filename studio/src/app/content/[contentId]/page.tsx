@@ -14,6 +14,9 @@ function ContentDetailInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [startingTranscription, setStartingTranscription] = useState(false);
+  const [startingCorrection, setStartingCorrection] = useState(false);
+  const [startingSegmentation, setStartingSegmentation] = useState(false);
+  const [startingKnowledge, setStartingKnowledge] = useState(false);
 
   useEffect(() => {
     fetchDetail();
@@ -23,12 +26,14 @@ function ContentDetailInner() {
     let interval: NodeJS.Timeout;
     if (content) {
       const isTranscriptionRunning = content.processing?.transcriptionStatus === 'queued' || content.processing?.transcriptionStatus === 'processing';
+      const isCorrectionRunning = content.processing?.transcriptCorrectionStatus === 'queued' || content.processing?.transcriptCorrectionStatus === 'processing';
       const isSceneDetectionRunning = content.processing?.sceneDetectionStatus === 'queued' || content.processing?.sceneDetectionStatus === 'processing';
+      const isKnowledgeRunning = content.processing?.metadataExtractionStatus === 'queued' || content.processing?.metadataExtractionStatus === 'processing';
       
-      if (isTranscriptionRunning || isSceneDetectionRunning) {
+      if (isTranscriptionRunning || isCorrectionRunning || isSceneDetectionRunning || isKnowledgeRunning) {
         interval = setInterval(() => {
           fetchDetail(true);
-        }, 5000);
+        }, 4000);
       }
     }
     return () => clearInterval(interval);
@@ -52,8 +57,6 @@ function ContentDetailInner() {
     }
   };
 
-  const [startingSegmentation, setStartingSegmentation] = useState(false);
-
   const startTranscription = async () => {
     if (!confirm("Are you sure you want to start transcription for this media?")) return;
     setStartingTranscription(true);
@@ -73,6 +76,28 @@ function ContentDetailInner() {
       alert(`Error: ${err.message}`);
     } finally {
       setStartingTranscription(false);
+    }
+  };
+
+  const startCorrection = async () => {
+    if (!confirm("Start AI Transcript Correction & Normalization?")) return;
+    setStartingCorrection(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/content/${contentId}/transcript/correct`, {
+        method: 'POST',
+        headers: {
+          'X-Admin-Token': ADMIN_TOKEN
+        }
+      });
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Failed to start transcript correction");
+      }
+      await fetchDetail();
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setStartingCorrection(false);
     }
   };
 
@@ -98,6 +123,28 @@ function ContentDetailInner() {
     }
   };
 
+  const startKnowledge = async () => {
+    if (!confirm("Start Knowledge Extraction for this media?")) return;
+    setStartingKnowledge(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/content/${contentId}/knowledge/extract`, {
+        method: 'POST',
+        headers: {
+          'X-Admin-Token': ADMIN_TOKEN
+        }
+      });
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Failed to start knowledge extraction");
+      }
+      await fetchDetail();
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setStartingKnowledge(false);
+    }
+  };
+
   if (loading) return (
     <div className="flex flex-col items-center justify-center py-32 space-y-4">
       <div className="w-10 h-10 border-4 border-white/10 border-t-[#F5B800] rounded-full animate-spin" />
@@ -114,6 +161,8 @@ function ContentDetailInner() {
   );
   
   if (!content) return <div className="text-white/50 text-center py-20">Artifact Not Found</div>;
+
+  const corrStatus = content.processing?.transcriptCorrectionStatus || 'not_started';
 
   return (
     <div className="max-w-5xl mx-auto relative isolate pb-20">
@@ -179,6 +228,26 @@ function ContentDetailInner() {
                 </span>
               </div>
             </div>
+
+            {content.transcriptCorrection && (
+              <div className="pt-5 border-t border-white/10">
+                <div className="text-xs uppercase tracking-widest text-white/30 mb-2">Correction Stats</div>
+                <div className="space-y-1.5 text-xs text-white/70">
+                  <div className="flex justify-between">
+                    <span className="text-white/40">Total Fixes:</span>
+                    <span className="font-mono text-[#F5B800] font-semibold">{content.transcriptCorrection.correctionCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/40">High Confidence:</span>
+                    <span className="font-mono text-emerald-400">{content.transcriptCorrection.highConfidenceCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/40">Medium Confidence:</span>
+                    <span className="font-mono text-amber-400">{content.transcriptCorrection.mediumConfidenceCount || 0}</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -239,11 +308,14 @@ function ContentDetailInner() {
             </h2>
             
             <div className="space-y-6">
+              {/* 1. Media Ingestion */}
               <TimelineItem 
                 label="Media Ingestion" 
                 status={content.mediaPlayable ? "Secure" : "Pending"} 
                 active={content.mediaPlayable} 
               />
+
+              {/* 2. Amazon Transcribe Pipeline */}
               <TimelineItem 
                 label="Amazon Transcribe Pipeline" 
                 status={content.processing?.transcriptionStatus === 'not_started' ? "Not Started" : content.processing?.transcriptionStatus} 
@@ -260,10 +332,10 @@ function ContentDetailInner() {
                     </button>
                   ) : content.processing?.transcriptionStatus === 'complete' ? (
                     <Link 
-                      href={`/content/${contentId}/transcript`} 
-                      className="ml-4 text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
+                      href={`/content/${contentId}/transcript?view=raw`} 
+                      className="ml-4 text-xs font-bold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
                     >
-                      View Logs
+                      View Raw Logs
                       <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                     </Link>
                   ) : (
@@ -274,6 +346,40 @@ function ContentDetailInner() {
                   )
                 }
               />
+
+              {/* 3. Transcript Correction / Normalization Layer */}
+              <TimelineItem 
+                label="Transcript Correction" 
+                status={corrStatus === 'not_started' ? "Not Started" : corrStatus} 
+                active={corrStatus === 'complete' || corrStatus === 'processing'}
+                action={
+                  (corrStatus === 'not_started' || corrStatus === 'failed') ? (
+                    <button 
+                      onClick={startCorrection} 
+                      disabled={startingCorrection || content.processing?.transcriptionStatus !== 'complete'}
+                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
+                    >
+                      {startingCorrection && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
+                      {startingCorrection ? 'Correcting...' : corrStatus === 'failed' ? 'Restart Correction' : 'Correct ASR'}
+                    </button>
+                  ) : corrStatus === 'complete' ? (
+                    <Link 
+                      href={`/content/${contentId}/transcript?view=corrected`} 
+                      className="ml-4 text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
+                    >
+                      View Corrected Transcript
+                      <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    </Link>
+                  ) : (
+                    <div className="ml-4 text-xs font-mono text-[#F5B800] flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-[#F5B800] animate-pulse" />
+                      Correcting
+                    </div>
+                  )
+                }
+              />
+
+              {/* 4. Scene Boundary Detection */}
               <TimelineItem 
                 label="Scene Boundary Detection" 
                 status={content.processing?.sceneDetectionStatus === 'not_started' ? "Not Started" : content.processing?.sceneDetectionStatus}
@@ -304,7 +410,38 @@ function ContentDetailInner() {
                   )
                 }
               />
-              <TimelineItem label="Knowledge Graph Extraction" status={content.processing?.metadataExtractionStatus === 'not_started' ? "Not Started" : content.processing?.metadataExtractionStatus} />
+
+              {/* 5. Knowledge Graph Extraction */}
+              <TimelineItem 
+                label="Knowledge Graph Extraction" 
+                status={content.processing?.metadataExtractionStatus === 'not_started' ? "Not Started" : content.processing?.metadataExtractionStatus}
+                active={content.processing?.metadataExtractionStatus === 'complete' || content.processing?.metadataExtractionStatus === 'processing'}
+                action={
+                  (content.processing?.metadataExtractionStatus === 'not_started' || content.processing?.metadataExtractionStatus === 'failed') ? (
+                    <button 
+                      onClick={startKnowledge} 
+                      disabled={startingKnowledge || content.processing?.sceneDetectionStatus !== 'complete'}
+                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
+                    >
+                      {startingKnowledge && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
+                      {startingKnowledge ? 'Initializing...' : content.processing?.metadataExtractionStatus === 'failed' ? 'Restart Process' : 'Execute Job'}
+                    </button>
+                  ) : content.processing?.metadataExtractionStatus === 'complete' ? (
+                    <Link 
+                      href={`/content/${contentId}/knowledge`} 
+                      className="ml-4 text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
+                    >
+                      View Knowledge
+                      <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    </Link>
+                  ) : (
+                    <div className="ml-4 text-xs font-mono text-white/40 flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-white/40 animate-pulse" />
+                      Running
+                    </div>
+                  )
+                }
+              />
               
               <div className="pt-4 border-t border-white/5">
                 <TimelineItem label="Final System State" status={content.aiReady ? "Armed" : "Offline"} active={content.aiReady} isAccent />

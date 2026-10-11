@@ -161,29 +161,25 @@ export const handler = async (event: any, context: any) => {
     await updateStatus(item, 'processing');
 
     currentStage = 'TRANSCRIPT_FETCH';
-    const transcriptKey = `content/${contentId}/transcripts/normalized/transcript.json`;
-    
-    console.log(JSON.stringify({
-      event: "EXPECTED_TRANSCRIPT_KEY",
-      contentId,
-      expectedKey: transcriptKey
-    }));
-
-    console.log(JSON.stringify({
-      event: "TRANSCRIPT_FETCH_START",
-      bucket: BUCKET_NAME,
-      key: transcriptKey
-    }));
-
+    const correctedKey = `content/${contentId}/transcripts/corrected/transcript.json`;
+    const normalizedKey = `content/${contentId}/transcripts/normalized/transcript.json`;
+    let transcriptKey = normalizedKey;
     let transcriptStr = '';
     try {
-      const getRes = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: transcriptKey }));
+      const getRes = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: correctedKey }));
       transcriptStr = await getRes.Body?.transformToString() || '';
-    } catch (err: any) {
-      if (err.name === 'NoSuchKey') {
-        throw new Error(`Normalized transcript not found for contentId ${contentId} at key ${transcriptKey}`);
+      transcriptKey = correctedKey;
+    } catch {
+      try {
+        const getRes = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: normalizedKey }));
+        transcriptStr = await getRes.Body?.transformToString() || '';
+        transcriptKey = normalizedKey;
+      } catch (err: any) {
+        if (err.name === 'NoSuchKey') {
+          throw new Error(`Transcript not found for contentId ${contentId} at key ${normalizedKey}`);
+        }
+        throw err;
       }
-      throw err;
     }
 
     currentStage = 'TRANSCRIPT_PARSE';
@@ -193,7 +189,7 @@ export const handler = async (event: any, context: any) => {
     const segments = transcript.segments || [];
     
     const isValidSchema = Array.isArray(segments) && segments.length > 0 && 
-                          segments.every((s: any) => typeof s.startTime === 'number' && typeof s.text === 'string');
+                          segments.every((s: any) => typeof s.startTime === 'number' && typeof (s.correctedText || s.originalText || s.text) === 'string');
 
     console.log(JSON.stringify({
       event: "TRANSCRIPT_SCHEMA_CHECK",
@@ -219,7 +215,8 @@ export const handler = async (event: any, context: any) => {
     }));
 
     const transcriptForLLM = segments.map((seg: any, idx: number) => {
-      return `[${idx}] ${formatTime(seg.startTime)} - ${formatTime(seg.endTime)}: ${seg.text}`;
+      const text = seg.correctedText || seg.originalText || seg.text || '';
+      return `[${idx}] ${formatTime(seg.startTime)} - ${formatTime(seg.endTime)}: ${text}`;
     }).join('\n');
 
     if (transcriptForLLM.length > 300000) {
