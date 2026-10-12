@@ -100,14 +100,11 @@ export class CdkStack extends cdk.Stack {
       eventPattern: {
         source: ['aws.transcribe'],
         detailType: ['Transcribe Job State Change'],
-        detail: {
-          TranscriptionJobStatus: ['COMPLETED', 'FAILED']
-        }
-      }
+      },
     });
     transcribeEventRule.addTarget(new targets.LambdaFunction(transcriptionCompletionLambda));
 
-    // Lambda Function
+    // Ask Scene Lambda Function (RAG inference placeholder for player)
     const askSceneLambda = new NodejsFunction(this, 'AskSceneLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
       entry: path.join(__dirname, '../../../backend/lambdas/ask-scene/index.ts'),
@@ -119,21 +116,14 @@ export class CdkStack extends cdk.Stack {
         nodeModules: ['openai', '@aws/bedrock-token-generator']
       },
       environment: {
-        ENABLE_BEDROCK_FALLBACK: 'true',
-        AI_PROVIDER: 'bedrock-mantle',
+        TABLE_NAME: contentTable.tableName,
+        BUCKET_NAME: mediaBucket.bucketName,
         BEDROCK_MANTLE_BASE_URL: 'https://bedrock-mantle.eu-north-1.api.aws/v1',
-        
       }
     });
 
-    // Grant Bedrock InvokeModel permission for Nova Pro (dormant provider)
-    askSceneLambda.addToRolePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: ['bedrock:InvokeModel'],
-      resources: ['*']
-    }));
-
-    // Grant Bedrock Mantle permissions (active provider)
+    contentTable.grantReadData(askSceneLambda);
+    mediaBucket.grantRead(askSceneLambda);
     askSceneLambda.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: [
@@ -143,14 +133,14 @@ export class CdkStack extends cdk.Stack {
       resources: ['*']
     }));
 
-    // Segmentation Worker Lambda Function
+    // Segmentation Worker Lambda Function (Scene Boundary Detection)
     const segmentationWorkerLambda = new NodejsFunction(this, 'SegmentationWorkerLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
       entry: path.join(__dirname, '../../../backend/lambdas/segmentation-worker/index.ts'),
       handler: 'handler',
       projectRoot: path.join(__dirname, '../../../'),
       logRetention: cdk.aws_logs.RetentionDays.ONE_WEEK,
-      timeout: cdk.Duration.seconds(300), // Max 5 mins for GPT OSS
+      timeout: cdk.Duration.seconds(300), // Max 5 mins
       bundling: {
         nodeModules: ['openai', '@aws/bedrock-token-generator']
       },
@@ -241,6 +231,39 @@ export class CdkStack extends cdk.Stack {
     contentLambda.addEnvironment('KNOWLEDGE_WORKER_FUNCTION_NAME', knowledgeExtractionWorkerLambda.functionName);
     knowledgeExtractionWorkerLambda.grantInvoke(contentLambda);
 
+    // Intelligence Compiler Worker Lambda Function (v0.15)
+    const intelligenceCompilerLambda = new NodejsFunction(this, 'IntelligenceCompilerLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: path.join(__dirname, '../../../backend/lambdas/intelligence-compiler-worker/index.ts'),
+      handler: 'handler',
+      projectRoot: path.join(__dirname, '../../../'),
+      logRetention: cdk.aws_logs.RetentionDays.ONE_WEEK,
+      timeout: cdk.Duration.seconds(300), // Max 5 mins
+      environment: {
+        TABLE_NAME: contentTable.tableName,
+        BUCKET_NAME: mediaBucket.bucketName,
+      }
+    });
+
+    contentTable.grantReadWriteData(intelligenceCompilerLambda);
+    mediaBucket.grantReadWrite(intelligenceCompilerLambda);
+
+    contentLambda.addEnvironment('INTELLIGENCE_COMPILER_FUNCTION_NAME', intelligenceCompilerLambda.functionName);
+    intelligenceCompilerLambda.grantInvoke(contentLambda);
+
+    // Automated Forward Pipeline Chaining Permissions & Function Names
+    transcriptCorrectionWorkerLambda.grantInvoke(transcriptionCompletionLambda);
+    transcriptionCompletionLambda.addEnvironment('TRANSCRIPT_CORRECTION_WORKER_FUNCTION_NAME', transcriptCorrectionWorkerLambda.functionName);
+
+    segmentationWorkerLambda.grantInvoke(transcriptCorrectionWorkerLambda);
+    transcriptCorrectionWorkerLambda.addEnvironment('SEGMENTATION_WORKER_FUNCTION_NAME', segmentationWorkerLambda.functionName);
+
+    knowledgeExtractionWorkerLambda.grantInvoke(segmentationWorkerLambda);
+    segmentationWorkerLambda.addEnvironment('KNOWLEDGE_WORKER_FUNCTION_NAME', knowledgeExtractionWorkerLambda.functionName);
+
+    intelligenceCompilerLambda.grantInvoke(knowledgeExtractionWorkerLambda);
+    knowledgeExtractionWorkerLambda.addEnvironment('INTELLIGENCE_COMPILER_FUNCTION_NAME', intelligenceCompilerLambda.functionName);
+
     // API Gateway REST API
     const api = new apigateway.RestApi(this, 'NarraViewApi', {
       restApiName: 'NarraView API',
@@ -260,7 +283,7 @@ export class CdkStack extends cdk.Stack {
     const askResource = aiResource.addResource('ask');
     askResource.addMethod('POST', askSceneIntegration);
 
-    // New Route: /content
+    // Route: /content
     const contentResource = api.root.addResource('content');
     const contentIntegration = new apigateway.LambdaIntegration(contentLambda);
     
@@ -301,6 +324,21 @@ export class CdkStack extends cdk.Stack {
     // Segment specific knowledge API
     const segmentKnowledgeResource = segmentsResource.addResource('{segmentId}').addResource('knowledge');
     segmentKnowledgeResource.addMethod('GET', contentIntegration);
+
+    // Content Intelligence API (v0.15)
+    const intelligenceResource = contentIdResource.addResource('intelligence');
+    intelligenceResource.addMethod('GET', contentIntegration);
+    const compileIntelligenceResource = intelligenceResource.addResource('compile');
+    compileIntelligenceResource.addMethod('POST', contentIntegration);
+    const intelligenceVersionsResource = intelligenceResource.addResource('versions');
+    intelligenceVersionsResource.addMethod('GET', contentIntegration);
+    const intelligenceVersionResource = intelligenceResource.addResource('{version}');
+    intelligenceVersionResource.addMethod('GET', contentIntegration);
+
+    // Pipeline Reprocess API
+    const pipelineResource = contentIdResource.addResource('pipeline');
+    const reprocessPipelineResource = pipelineResource.addResource('reprocess');
+    reprocessPipelineResource.addMethod('POST', contentIntegration);
 
     // Outputs
     new cdk.CfnOutput(this, 'NarraViewApiUrl', {

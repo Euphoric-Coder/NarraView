@@ -1,17 +1,20 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import OpenAI from "openai";
 import { getTokenProvider } from '@aws/bedrock-token-generator';
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 const s3Client = new S3Client({});
+const lambdaClient = new LambdaClient({});
 
 const TABLE_NAME = process.env.TABLE_NAME || '';
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
 const BEDROCK_MANTLE_BASE_URL = process.env.BEDROCK_MANTLE_BASE_URL || 'https://bedrock-mantle.eu-north-1.api.aws/v1';
 const BEDROCK_MANTLE_MODEL = process.env.BEDROCK_MANTLE_MODEL || 'openai.gpt-oss-120b';
+const KNOWLEDGE_WORKER_FUNCTION_NAME = process.env.KNOWLEDGE_WORKER_FUNCTION_NAME || '';
 
 let provideToken: any = null;
 
@@ -393,7 +396,24 @@ OUTPUT FORMAT:
     });
 
     currentStage = 'STATUS_UPDATE';
-    await updateStatus(item, 'complete');
+    const currentCheck = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+    const isPipeline = currentCheck.Item?.processing?.pipelineStatus === 'processing';
+
+    const updatedProcessing = {
+      ...item.processing,
+      sceneDetectionStatus: 'complete',
+      ...(isPipeline ? {
+        currentPipelineStage: 'knowledge_extraction',
+        metadataExtractionStatus: 'queued',
+      } : {})
+    };
+
+    const updated = {
+      ...(currentCheck.Item || item),
+      processing: updatedProcessing,
+      updatedAt: new Date().toISOString()
+    };
+    await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
     
     console.log({
       event: "SEGMENTATION_COMPLETE",
@@ -401,6 +421,15 @@ OUTPUT FORMAT:
       segmentCount: detectedSegments.length,
       durationMs: Date.now() - startTimeMs
     });
+
+    if (isPipeline && KNOWLEDGE_WORKER_FUNCTION_NAME) {
+      console.log(`Pipeline auto-chaining: advancing to knowledge_extraction for ${contentId}`);
+      await lambdaClient.send(new InvokeCommand({
+        FunctionName: KNOWLEDGE_WORKER_FUNCTION_NAME,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ contentId }))
+      }));
+    }
 
   } catch (err: any) {
     console.log(JSON.stringify({
@@ -414,7 +443,22 @@ OUTPUT FORMAT:
 
     try {
       const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
-      if (check.Item) await updateStatus(check.Item, 'failed');
+      if (check.Item) {
+        const isPipeline = check.Item.processing?.pipelineStatus === 'processing';
+        const updated = {
+          ...check.Item,
+          processing: {
+            ...check.Item.processing,
+            sceneDetectionStatus: 'failed',
+            ...(isPipeline ? {
+              pipelineStatus: 'failed',
+              pipelineErrorStage: 'scene_detection',
+            } : {})
+          },
+          updatedAt: new Date().toISOString()
+        };
+        await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+      }
     } catch (e) {
       console.error("Failed to update status to failed in DynamoDB", e);
     }

@@ -1,13 +1,16 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, GetCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { TranscribeClient, StartTranscriptionJobCommand } from "@aws-sdk/client-transcribe";
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { computeInvalidatedProcessing, PipelineStage } from "./pipeline";
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 const s3Client = new S3Client({});
 const transcribeClient = new TranscribeClient({});
+const lambdaClient = new LambdaClient({});
 
 const TABLE_NAME = process.env.TABLE_NAME || '';
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
@@ -22,45 +25,49 @@ export const handler = async (event: any) => {
   
   try {
     if (path === '/content' && method === 'GET') {
-      const res = await docClient.send(new ScanCommand({ TableName: TABLE_NAME }));
+      const command = new ScanCommand({ TableName: TABLE_NAME });
+      const response = await docClient.send(command);
+      const items = response.Items || [];
       
-      const items = await Promise.all((res.Items || []).map(async (item) => {
-        if (item.videoUrl && item.videoUrl.startsWith('s3://')) {
-          const key = item.videoUrl.split('/').slice(3).join('/');
-          const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
-          item.videoUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+      const resolvedItems = await Promise.all(items.map(async (item: any) => {
+        let videoUrl = item.videoUrl;
+        if (item.videoS3Key) {
+          const getCommand = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: item.videoS3Key });
+          videoUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 3600 });
         }
-        if (item.posterUrl && item.posterUrl.startsWith('s3://')) {
-          const key = item.posterUrl.split('/').slice(3).join('/');
-          const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
-          item.posterUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+        let posterUrl = item.posterUrl;
+        if (item.posterS3Key) {
+          const getCommand = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: item.posterS3Key });
+          posterUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 3600 });
         }
-        return item;
+        return { ...item, videoUrl, posterUrl };
       }));
       
-      return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify(items) };
+      return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify(resolvedItems) };
     }
     
     if (path === '/content/{contentId}' && method === 'GET') {
       const contentId = event.pathParameters.contentId;
-      const res = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
-      if (!res.Item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
+      const command = new GetCommand({ TableName: TABLE_NAME, Key: { contentId } });
+      const response = await docClient.send(command);
       
-      const item = res.Item;
-      if (item.videoUrl && item.videoUrl.startsWith('s3://')) {
-        const key = item.videoUrl.split('/').slice(3).join('/');
-        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
-        item.videoUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+      if (!response.Item) {
+        return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
       }
-      if (item.posterUrl && item.posterUrl.startsWith('s3://')) {
-        const key = item.posterUrl.split('/').slice(3).join('/');
-        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
-        item.posterUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+      
+      const item = response.Item;
+      if (item.videoS3Key) {
+        const getCommand = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: item.videoS3Key });
+        item.videoUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 3600 });
+      }
+      if (item.posterS3Key) {
+        const getCommand = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: item.posterS3Key });
+        item.posterUrl = await getSignedUrl(s3Client, getCommand, { expiresIn: 3600 });
       }
       
       return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify(item) };
     }
-    
+
     if (path === '/content/{contentId}/transcript' && method === 'GET') {
       const contentId = event.pathParameters.contentId;
       const key = `content/${contentId}/transcripts/normalized/transcript.json`;
@@ -94,11 +101,271 @@ export const handler = async (event: any) => {
         throw err;
       }
     }
-    
-    // Write operations require admin token
-    const authHeader = event.headers['x-admin-token'] || event.headers['X-Admin-Token'];
-    if (authHeader !== 'narraview-admin-token') {
-      return { statusCode: 401, headers: corsHeaders(), body: JSON.stringify({ error: 'Unauthorized' }) };
+
+    if (path === '/content/{contentId}/intelligence' && method === 'GET') {
+      const contentId = event.pathParameters.contentId;
+      const key = `content/${contentId}/intelligence/latest.json`;
+      
+      try {
+        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
+        const res = await s3Client.send(command);
+        const bodyStr = await res.Body?.transformToString();
+        return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
+      } catch (err: any) {
+        if (err.name === 'NoSuchKey') {
+          return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Intelligence package not found' }) };
+        }
+        throw err;
+      }
+    }
+
+    if (path === '/content/{contentId}/intelligence/versions' && method === 'GET') {
+      const contentId = event.pathParameters.contentId;
+      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = check.Item;
+      if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Content not found' }) };
+      
+      const latestVersion = item.intelligence?.latestVersion || 0;
+      const versions = [];
+      for (let v = 1; v <= latestVersion; v++) {
+        versions.push({
+          version: v,
+          s3Key: `content/${contentId}/intelligence/v${v}/intelligence.json`,
+          isLatest: v === latestVersion,
+        });
+      }
+      return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify({ contentId, latestVersion, versions }) };
+    }
+
+    if (path === '/content/{contentId}/intelligence/{version}' && method === 'GET') {
+      const { contentId, version } = event.pathParameters;
+      const parsedVersion = version.startsWith('v') ? version : `v${version}`;
+      const key = `content/${contentId}/intelligence/${parsedVersion}/intelligence.json`;
+      
+      try {
+        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
+        const res = await s3Client.send(command);
+        const bodyStr = await res.Body?.transformToString();
+        return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
+      } catch (err: any) {
+        if (err.name === 'NoSuchKey') {
+          return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: `Intelligence version ${version} not found` }) };
+        }
+        throw err;
+      }
+    }
+
+    // Pipeline Reprocess Orchestration Endpoint
+    if (path === '/content/{contentId}/pipeline/reprocess' && method === 'POST') {
+      const contentId = event.pathParameters.contentId;
+      
+      if (contentId === 'signal-lost') {
+        return { 
+          statusCode: 400, 
+          headers: corsHeaders(), 
+          body: JSON.stringify({ error: 'AI pipeline reprocessing is disabled for reference title Signal Lost' }) 
+        };
+      }
+      
+      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = check.Item;
+      if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
+      
+      // Stop duplicate runs if pipeline is actively processing (allow recovery if stuck > 10 mins)
+      let isForce = false;
+      if (event.body) {
+        try {
+          const parsed = JSON.parse(event.body);
+          if (parsed.force) isForce = true;
+        } catch {}
+      }
+      const isStuck = item.processing?.pipelineStartedAt &&
+        (Date.now() - new Date(item.processing.pipelineStartedAt).getTime() > 10 * 60 * 1000);
+
+      if (item.processing?.pipelineStatus === 'processing' && !isStuck && !isForce) {
+        return { 
+          statusCode: 409, 
+          headers: corsHeaders(), 
+          body: JSON.stringify({ error: 'An AI pipeline reprocessing job is already active for this title' }) 
+        };
+      }
+
+      let startFrom: PipelineStage = 'transcript_correction';
+      if (event.body) {
+        try {
+          const parsed = JSON.parse(event.body);
+          if (parsed.startFrom) startFrom = parsed.startFrom;
+        } catch {}
+      }
+
+      // Check prerequisites for requested start stage
+      if (startFrom === 'transcription') {
+        if (!item.mediaPlayable) {
+          return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Media must be playable before starting transcription' }) };
+        }
+      } else if (startFrom === 'transcript_correction' || startFrom === 'scene_detection') {
+        if (item.processing?.transcriptionStatus !== 'complete') {
+          return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription must be complete before reprocessing downstream' }) };
+        }
+      } else if (startFrom === 'knowledge_extraction') {
+        if (item.processing?.sceneDetectionStatus !== 'complete') {
+          return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Scene detection must be complete before resuming knowledge extraction' }) };
+        }
+      } else if (startFrom === 'intelligence_compilation') {
+        if (item.processing?.metadataExtractionStatus !== 'complete') {
+          return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Knowledge extraction must be complete before compiling intelligence' }) };
+        }
+      }
+
+      // Compute downstream invalidation
+      const invalidatedProcessing = computeInvalidatedProcessing(item.processing, startFrom);
+
+      // Initialize pipeline state
+      const updatedProcessing = {
+        ...invalidatedProcessing,
+        pipelineStatus: 'processing',
+        currentPipelineStage: startFrom,
+        pipelineErrorStage: null,
+        pipelineStartedAt: new Date().toISOString(),
+        pipelineStartFrom: startFrom,
+      };
+
+      if (startFrom === 'transcription') {
+        const jobName = `narraview-${contentId}-${Date.now()}`;
+        const mediaFileUri = item.videoUrl || `s3://${BUCKET_NAME}/${item.videoS3Key}`;
+        
+        let mediaFormat = 'mp4';
+        if (mediaFileUri.endsWith('.mp3')) mediaFormat = 'mp3';
+        else if (mediaFileUri.endsWith('.wav')) mediaFormat = 'wav';
+        else if (mediaFileUri.endsWith('.webm')) mediaFormat = 'webm';
+        
+        const transcribeCommand = new StartTranscriptionJobCommand({
+          TranscriptionJobName: jobName,
+          LanguageCode: item.language || 'en-US',
+          MediaFormat: mediaFormat as any,
+          Media: { MediaFileUri: mediaFileUri }
+        });
+        
+        await transcribeClient.send(transcribeCommand);
+        
+        updatedProcessing.transcriptionStatus = 'queued';
+        updatedProcessing.transcribeJobName = jobName;
+
+        const updated = {
+          ...item,
+          processing: updatedProcessing,
+          transcription: {
+            jobName,
+            status: 'queued',
+            startedAt: new Date().toISOString()
+          },
+          updatedAt: new Date().toISOString()
+        };
+        await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+        return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, pipelineStatus: 'processing', currentPipelineStage: startFrom, jobName }) };
+      }
+
+      // Dispatch specific worker
+      if (startFrom === 'transcript_correction') {
+        updatedProcessing.transcriptCorrectionStatus = 'queued';
+      } else if (startFrom === 'scene_detection') {
+        updatedProcessing.sceneDetectionStatus = 'queued';
+      } else if (startFrom === 'knowledge_extraction') {
+        updatedProcessing.metadataExtractionStatus = 'queued';
+      } else if (startFrom === 'intelligence_compilation') {
+        updatedProcessing.intelligenceCompilationStatus = 'queued';
+      }
+
+      const updated = {
+        ...item,
+        processing: updatedProcessing,
+        updatedAt: new Date().toISOString()
+      };
+      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+
+      let targetWorkerFn: string | undefined;
+      if (startFrom === 'transcript_correction') targetWorkerFn = process.env.TRANSCRIPT_CORRECTION_WORKER_FUNCTION_NAME;
+      else if (startFrom === 'scene_detection') targetWorkerFn = process.env.SEGMENTATION_WORKER_FUNCTION_NAME;
+      else if (startFrom === 'knowledge_extraction') targetWorkerFn = process.env.KNOWLEDGE_WORKER_FUNCTION_NAME;
+      else if (startFrom === 'intelligence_compilation') targetWorkerFn = process.env.INTELLIGENCE_COMPILER_FUNCTION_NAME;
+
+      if (targetWorkerFn) {
+        await lambdaClient.send(new InvokeCommand({
+          FunctionName: targetWorkerFn,
+          InvocationType: 'Event',
+          Payload: Buffer.from(JSON.stringify({ contentId }))
+        }));
+      }
+
+      return { 
+        statusCode: 202, 
+        headers: corsHeaders(), 
+        body: JSON.stringify({ 
+          contentId, 
+          pipelineStatus: 'processing', 
+          currentPipelineStage: startFrom 
+        }) 
+      };
+    }
+
+    if (path === '/content/{contentId}/intelligence/compile' && method === 'POST') {
+      const contentId = event.pathParameters.contentId;
+      
+      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = check.Item;
+      if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
+      
+      if (item.processing?.pipelineStatus === 'processing') {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Cannot compile intelligence while pipeline reprocessing is active' }) };
+      }
+
+      // Verification: transcription, scene detection, and knowledge extraction must be complete
+      if (
+        item.processing?.transcriptionStatus !== 'complete' ||
+        item.processing?.sceneDetectionStatus !== 'complete' ||
+        item.processing?.metadataExtractionStatus !== 'complete'
+      ) {
+        return { 
+          statusCode: 400, 
+          headers: corsHeaders(), 
+          body: JSON.stringify({ 
+            error: 'Transcription, segment detection, and knowledge extraction must be complete before intelligence compilation' 
+          }) 
+        };
+      }
+      
+      if (
+        item.processing?.intelligenceCompilationStatus === 'queued' ||
+        item.processing?.intelligenceCompilationStatus === 'processing'
+      ) {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Intelligence compilation already in progress' }) };
+      }
+      
+      // Intelligence recompilation does NOT invalidate upstream stages
+      const updated = {
+        ...item,
+        processing: {
+          ...item.processing,
+          intelligenceCompilationStatus: 'queued',
+        },
+        intelligence: {
+          ...(item.intelligence || {}),
+          status: 'queued',
+          startedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      };
+      
+      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+      
+      const invokeCommand = new InvokeCommand({
+        FunctionName: process.env.INTELLIGENCE_COMPILER_FUNCTION_NAME,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ contentId })),
+      });
+      await lambdaClient.send(invokeCommand);
+      
+      return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued' }) };
     }
 
     if (path === '/content/{contentId}/transcript/correct' && method === 'POST') {
@@ -108,19 +375,30 @@ export const handler = async (event: any) => {
       const item = check.Item;
       if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
       
+      const isCorrectionStuck = item.transcriptCorrection?.startedAt &&
+        (Date.now() - new Date(item.transcriptCorrection.startedAt).getTime() > 10 * 60 * 1000);
+
+      if (item.processing?.pipelineStatus === 'processing' && !isCorrectionStuck) {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Cannot run transcript correction while pipeline reprocessing is active' }) };
+      }
+
       if (item.processing?.transcriptionStatus !== 'complete') {
         return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription must be complete before transcript correction' }) };
       }
       
-      if (item.processing?.transcriptCorrectionStatus === 'queued' || item.processing?.transcriptCorrectionStatus === 'processing') {
+      if ((item.processing?.transcriptCorrectionStatus === 'queued' || item.processing?.transcriptCorrectionStatus === 'processing') && !isCorrectionStuck) {
         return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcript correction already in progress' }) };
       }
       
+      // Downstream invalidation: transcript correction rerun invalidates scene detection, knowledge extraction, intelligence compilation
+      const invalidatedProcessing = computeInvalidatedProcessing(item.processing, 'transcript_correction');
+
       const updated = {
         ...item,
         processing: {
-          ...item.processing,
-          transcriptCorrectionStatus: 'queued'
+          ...invalidatedProcessing,
+          transcriptCorrectionStatus: 'queued',
+          pipelineStatus: 'idle',
         },
         transcriptCorrection: {
           status: 'queued',
@@ -131,13 +409,11 @@ export const handler = async (event: any) => {
       
       await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
       
-      const lambdaClient = new (require('@aws-sdk/client-lambda').LambdaClient)({});
-      const invokeCommand = new (require('@aws-sdk/client-lambda').InvokeCommand)({
+      const invokeCommand = new InvokeCommand({
         FunctionName: process.env.TRANSCRIPT_CORRECTION_WORKER_FUNCTION_NAME,
         InvocationType: 'Event',
         Payload: Buffer.from(JSON.stringify({ contentId }))
       });
-      
       await lambdaClient.send(invokeCommand);
       
       return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued' }) };
@@ -145,54 +421,71 @@ export const handler = async (event: any) => {
     
     if (path === '/content' && method === 'POST') {
       const body = JSON.parse(event.body);
-      const { contentId, title, description, contentType, language, videoUrl, posterUrl, durationSeconds, mediaPlayable, aiReady } = body;
+      const { contentId, title, contentType, language, description, videoS3Key, videoUrl, posterS3Key, posterUrl } = body;
       
-      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
-      if (check.Item) {
-        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Conflict: contentId already exists' }) };
+      if (!contentId || !title || !contentType || !language) {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Missing required fields' }) };
       }
       
-      const record = {
-        contentId, title, description, contentType, language, videoUrl, posterUrl, durationSeconds,
-        mediaPlayable: mediaPlayable ?? false, 
-        aiReady: aiReady ?? false,
-        ingestionStatus: 'registered',
+      const item = {
+        contentId,
+        title,
+        contentType,
+        language,
+        description: description || '',
+        videoS3Key: videoS3Key || null,
+        videoUrl: videoUrl || null,
+        posterS3Key: posterS3Key || null,
+        posterUrl: posterUrl || null,
+        mediaPlayable: !!(videoS3Key || videoUrl),
+        aiReady: false,
         processing: {
           transcriptionStatus: 'not_started',
+          transcriptCorrectionStatus: 'not_started',
           sceneDetectionStatus: 'not_started',
-          metadataExtractionStatus: 'not_started'
+          metadataExtractionStatus: 'not_started',
+          intelligenceCompilationStatus: 'not_started',
+          pipelineStatus: 'idle',
         },
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
       
-      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: record }));
-      return { statusCode: 201, headers: corsHeaders(), body: JSON.stringify(record) };
+      const command = new PutCommand({ TableName: TABLE_NAME, Item: item });
+      await docClient.send(command);
+      
+      return { statusCode: 201, headers: corsHeaders(), body: JSON.stringify(item) };
     }
     
     if (path === '/content/{contentId}' && method === 'PATCH') {
       const contentId = event.pathParameters.contentId;
       const body = JSON.parse(event.body);
       
-      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
-      if (!check.Item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
+      const updateKeys = Object.keys(body).filter(k => k !== 'contentId');
+      if (updateKeys.length === 0) {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'No fields to update' }) };
+      }
       
-      // Merge safe fields
-      const updated = { 
-        ...check.Item, 
-        title: body.title ?? check.Item.title,
-        description: body.description ?? check.Item.description,
-        contentType: body.contentType ?? check.Item.contentType,
-        language: body.language ?? check.Item.language,
-        videoUrl: body.videoUrl ?? check.Item.videoUrl,
-        posterUrl: body.posterUrl ?? check.Item.posterUrl,
-        mediaPlayable: body.mediaPlayable ?? check.Item.mediaPlayable,
-        aiReady: body.aiReady ?? check.Item.aiReady,
-        updatedAt: new Date().toISOString() 
-      };
+      let updateExpr = 'SET ' + updateKeys.map(k => `#${k} = :${k}`).join(', ') + ', #updatedAt = :updatedAt';
+      const exprAttrNames: any = { '#updatedAt': 'updatedAt' };
+      const exprAttrValues: any = { ':updatedAt': new Date().toISOString() };
       
-      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
-      return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify(updated) };
+      updateKeys.forEach(k => {
+        exprAttrNames[`#${k}`] = k;
+        exprAttrValues[`:${k}`] = body[k];
+      });
+      
+      const command = new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { contentId },
+        UpdateExpression: updateExpr,
+        ExpressionAttributeNames: exprAttrNames,
+        ExpressionAttributeValues: exprAttrValues,
+        ReturnValues: 'ALL_NEW'
+      });
+      
+      const response = await docClient.send(command);
+      return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify(response.Attributes) };
     }
     
     if (path === '/content/{contentId}/transcribe' && method === 'POST') {
@@ -202,43 +495,67 @@ export const handler = async (event: any) => {
       const item = check.Item;
       if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
       
-      if (!item.mediaPlayable || !item.videoUrl || !item.videoUrl.startsWith('s3://')) {
-        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Media not playable or not hosted on S3' }) };
+      if (item.processing?.pipelineStatus === 'processing') {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Cannot trigger transcription while pipeline reprocessing is active' }) };
+      }
+
+      if (!item.mediaPlayable) {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Media is not playable or uploaded' }) };
       }
       
       if (item.processing?.transcriptionStatus === 'queued' || item.processing?.transcriptionStatus === 'processing') {
-        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription already in progress' }) };
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription job already in progress' }) };
       }
       
-      const jobName = `narraview-${contentId}-${Date.now()}`.replace(/[^a-zA-Z0-9-_.!*'()]/g, '-');
-      let languageCode = 'en-US';
-      if (item.language === 'en') languageCode = 'en-US';
-      if (item.language === 'es') languageCode = 'es-US';
-      // Expand as needed
+      let mediaFileUri = item.videoUrl;
+      if (item.videoS3Key) {
+        mediaFileUri = `s3://${BUCKET_NAME}/${item.videoS3Key}`;
+      } else if (item.videoUrl && item.videoUrl.includes('.amazonaws.com/')) {
+        const urlObj = new URL(item.videoUrl);
+        const key = urlObj.pathname.startsWith('/') ? urlObj.pathname.slice(1) : urlObj.pathname;
+        mediaFileUri = `s3://${BUCKET_NAME}/${key}`;
+      }
       
-      const startCommand = new StartTranscriptionJobCommand({
+      if (!mediaFileUri) {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Missing media location URI' }) };
+      }
+      
+      const jobName = `narraview-${contentId}-${Date.now()}`;
+      let mediaFormat = 'mp4';
+      if (mediaFileUri.endsWith('.mp3')) mediaFormat = 'mp3';
+      else if (mediaFileUri.endsWith('.wav')) mediaFormat = 'wav';
+      else if (mediaFileUri.endsWith('.webm')) mediaFormat = 'webm';
+      
+      const transcribeCommand = new StartTranscriptionJobCommand({
         TranscriptionJobName: jobName,
-        LanguageCode: languageCode,
-        MediaFormat: 'mp4',
-        Media: {
-          MediaFileUri: item.videoUrl
-        }
+        LanguageCode: item.language || 'en-US',
+        MediaFormat: mediaFormat as any,
+        Media: { MediaFileUri: mediaFileUri }
       });
       
-      await transcribeClient.send(startCommand);
+      await transcribeClient.send(transcribeCommand);
       
+      // Invalidation: transcription rerun invalidates transcript correction, scene detection, knowledge extraction, intelligence compilation
+      const invalidatedProcessing = computeInvalidatedProcessing(item.processing, 'transcription');
+
       const updated = {
         ...item,
         processing: {
-          ...item.processing,
-          transcriptionStatus: 'queued'
+          ...invalidatedProcessing,
+          transcriptionStatus: 'queued',
+          transcribeJobName: jobName,
+          pipelineStatus: 'idle',
+        },
+        transcription: {
+          jobName,
+          status: 'queued',
+          startedAt: new Date().toISOString()
         },
         updatedAt: new Date().toISOString()
       };
       
       await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
-      
-      return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued', jobName }) };
+      return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, jobName, status: 'queued' }) };
     }
     
     if (path === '/content/upload-url' && method === 'POST') {
@@ -268,6 +585,10 @@ export const handler = async (event: any) => {
       const item = check.Item;
       if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
       
+      if (item.processing?.pipelineStatus === 'processing') {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Cannot run segment detection while pipeline reprocessing is active' }) };
+      }
+
       if (item.processing?.transcriptionStatus !== 'complete') {
         return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription must be complete before segment detection' }) };
       }
@@ -276,24 +597,26 @@ export const handler = async (event: any) => {
         return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Segment detection already in progress' }) };
       }
       
+      // Invalidation: segment detection rerun invalidates knowledge extraction, intelligence compilation
+      const invalidatedProcessing = computeInvalidatedProcessing(item.processing, 'scene_detection');
+
       const updated = {
         ...item,
         processing: {
-          ...item.processing,
-          sceneDetectionStatus: 'queued'
+          ...invalidatedProcessing,
+          sceneDetectionStatus: 'queued',
+          pipelineStatus: 'idle',
         },
         updatedAt: new Date().toISOString()
       };
       
       await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
       
-      const lambdaClient = new (require('@aws-sdk/client-lambda').LambdaClient)({});
-      const invokeCommand = new (require('@aws-sdk/client-lambda').InvokeCommand)({
+      const invokeCommand = new InvokeCommand({
         FunctionName: process.env.SEGMENTATION_WORKER_FUNCTION_NAME,
         InvocationType: 'Event',
         Payload: Buffer.from(JSON.stringify({ contentId }))
       });
-      
       await lambdaClient.send(invokeCommand);
       
       return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued' }) };
@@ -323,6 +646,10 @@ export const handler = async (event: any) => {
       const item = check.Item;
       if (!item) return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Not found' }) };
       
+      if (item.processing?.pipelineStatus === 'processing') {
+        return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Cannot run knowledge extraction while pipeline reprocessing is active' }) };
+      }
+
       if (item.processing?.transcriptionStatus !== 'complete' || item.processing?.sceneDetectionStatus !== 'complete') {
         return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcription and scene detection must be complete before knowledge extraction' }) };
       }
@@ -331,24 +658,26 @@ export const handler = async (event: any) => {
         return { statusCode: 409, headers: corsHeaders(), body: JSON.stringify({ error: 'Knowledge extraction already in progress' }) };
       }
       
+      // Invalidation: knowledge extraction rerun invalidates intelligence compilation
+      const invalidatedProcessing = computeInvalidatedProcessing(item.processing, 'knowledge_extraction');
+
       const updated = {
         ...item,
         processing: {
-          ...item.processing,
-          metadataExtractionStatus: 'queued'
+          ...invalidatedProcessing,
+          metadataExtractionStatus: 'queued',
+          pipelineStatus: 'idle',
         },
         updatedAt: new Date().toISOString()
       };
       
       await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
       
-      const lambdaClient = new (require('@aws-sdk/client-lambda').LambdaClient)({});
-      const invokeCommand = new (require('@aws-sdk/client-lambda').InvokeCommand)({
+      const invokeCommand = new InvokeCommand({
         FunctionName: process.env.KNOWLEDGE_WORKER_FUNCTION_NAME,
         InvocationType: 'Event',
         Payload: Buffer.from(JSON.stringify({ contentId }))
       });
-      
       await lambdaClient.send(invokeCommand);
       
       return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued' }) };

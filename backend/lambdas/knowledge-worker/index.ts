@@ -1,6 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import OpenAI from "openai";
 import { getTokenProvider } from '@aws/bedrock-token-generator';
 import {
@@ -15,11 +16,13 @@ import {
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 const s3Client = new S3Client({});
+const lambdaClient = new LambdaClient({});
 
 const TABLE_NAME = process.env.TABLE_NAME || '';
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
 const BEDROCK_MANTLE_BASE_URL = process.env.BEDROCK_MANTLE_BASE_URL || 'https://bedrock-mantle.eu-north-1.api.aws/v1';
 const BEDROCK_MANTLE_MODEL = process.env.BEDROCK_MANTLE_MODEL || 'openai.gpt-oss-120b';
+const INTELLIGENCE_COMPILER_FUNCTION_NAME = process.env.INTELLIGENCE_COMPILER_FUNCTION_NAME || '';
 
 let provideToken: any = null;
 
@@ -477,12 +480,21 @@ OUTPUT FORMAT:
     }));
 
     currentStage = 'STATUS_UPDATE';
+    const currentCheck = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+    const isPipeline = currentCheck.Item?.processing?.pipelineStatus === 'processing';
+
+    const updatedProcessing = {
+      ...item.processing,
+      metadataExtractionStatus: 'complete',
+      ...(isPipeline ? {
+        currentPipelineStage: 'intelligence_compilation',
+        intelligenceCompilationStatus: 'queued',
+      } : {})
+    };
+
     const updated = {
-      ...item,
-      processing: {
-        ...item.processing,
-        metadataExtractionStatus: 'complete'
-      },
+      ...(currentCheck.Item || item),
+      processing: updatedProcessing,
       knowledge: {
         status: 'complete',
         knowledgeS3Key: globalKey,
@@ -507,6 +519,15 @@ OUTPUT FORMAT:
       durationMs: Date.now() - startTimeMs
     }));
 
+    if (isPipeline && INTELLIGENCE_COMPILER_FUNCTION_NAME) {
+      console.log(`Pipeline auto-chaining: advancing to intelligence_compilation for ${contentId}`);
+      await lambdaClient.send(new InvokeCommand({
+        FunctionName: INTELLIGENCE_COMPILER_FUNCTION_NAME,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ contentId }))
+      }));
+    }
+
   } catch (err: any) {
     console.log(JSON.stringify({
       event: "KNOWLEDGE_JOB_FAILED",
@@ -520,11 +541,16 @@ OUTPUT FORMAT:
     try {
       const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
       if (check.Item) {
+        const isPipeline = check.Item.processing?.pipelineStatus === 'processing';
         const updated = {
           ...check.Item,
           processing: {
             ...check.Item.processing,
-            metadataExtractionStatus: 'failed'
+            metadataExtractionStatus: 'failed',
+            ...(isPipeline ? {
+              pipelineStatus: 'failed',
+              pipelineErrorStage: 'knowledge_extraction',
+            } : {})
           },
           knowledge: {
             ...check.Item.knowledge,

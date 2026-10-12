@@ -1,15 +1,18 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { TranscribeClient, GetTranscriptionJobCommand } from "@aws-sdk/client-transcribe";
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 const s3Client = new S3Client({});
 const transcribeClient = new TranscribeClient({});
+const lambdaClient = new LambdaClient({});
 
 const TABLE_NAME = process.env.TABLE_NAME || '';
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
+const TRANSCRIPT_CORRECTION_WORKER_FUNCTION_NAME = process.env.TRANSCRIPT_CORRECTION_WORKER_FUNCTION_NAME || '';
 
 export const handler = async (event: any) => {
   console.log("Received event:", JSON.stringify(event));
@@ -31,17 +34,35 @@ export const handler = async (event: any) => {
   }
   const contentId = match[1];
 
+  const getRes = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+  const item = getRes.Item;
+  const isPipeline = item?.processing?.pipelineStatus === 'processing';
+
   if (status === 'FAILED') {
     console.log(`Transcription failed for ${contentId}. Updating DynamoDB.`);
-    await docClient.send(new UpdateCommand({
-      TableName: TABLE_NAME,
-      Key: { contentId },
-      UpdateExpression: "SET processing.transcriptionStatus = :status, updatedAt = :updatedAt",
-      ExpressionAttributeValues: {
-        ":status": "failed",
-        ":updatedAt": new Date().toISOString()
-      }
-    }));
+    if (isPipeline) {
+      await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { contentId },
+        UpdateExpression: "SET processing.transcriptionStatus = :status, processing.pipelineStatus = :pipStatus, processing.pipelineErrorStage = :errStage, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":status": "failed",
+          ":pipStatus": "failed",
+          ":errStage": "transcription",
+          ":updatedAt": new Date().toISOString()
+        }
+      }));
+    } else {
+      await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { contentId },
+        UpdateExpression: "SET processing.transcriptionStatus = :status, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":status": "failed",
+          ":updatedAt": new Date().toISOString()
+        }
+      }));
+    }
     return;
   }
 
@@ -82,16 +103,39 @@ export const handler = async (event: any) => {
       ContentType: 'application/json'
     }));
 
-    // 4. Update DynamoDB
-    await docClient.send(new UpdateCommand({
-      TableName: TABLE_NAME,
-      Key: { contentId },
-      UpdateExpression: "SET processing.transcriptionStatus = :status, updatedAt = :updatedAt",
-      ExpressionAttributeValues: {
-        ":status": "complete",
-        ":updatedAt": new Date().toISOString()
+    // 4. Update DynamoDB & Check Pipeline Auto-chaining
+    if (isPipeline) {
+      console.log(`Pipeline auto-chaining: advancing to transcript_correction for ${contentId}`);
+      await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { contentId },
+        UpdateExpression: "SET processing.transcriptionStatus = :status, processing.currentPipelineStage = :nextStage, processing.transcriptCorrectionStatus = :corrStatus, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":status": "complete",
+          ":nextStage": "transcript_correction",
+          ":corrStatus": "queued",
+          ":updatedAt": new Date().toISOString()
+        }
+      }));
+
+      if (TRANSCRIPT_CORRECTION_WORKER_FUNCTION_NAME) {
+        await lambdaClient.send(new InvokeCommand({
+          FunctionName: TRANSCRIPT_CORRECTION_WORKER_FUNCTION_NAME,
+          InvocationType: 'Event',
+          Payload: Buffer.from(JSON.stringify({ contentId }))
+        }));
       }
-    }));
+    } else {
+      await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { contentId },
+        UpdateExpression: "SET processing.transcriptionStatus = :status, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":status": "complete",
+          ":updatedAt": new Date().toISOString()
+        }
+      }));
+    }
     console.log(`Successfully completed transcription pipeline for ${contentId}`);
   }
 };
