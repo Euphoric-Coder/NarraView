@@ -24,15 +24,21 @@ function KnowledgeInspectorInner() {
   }, [contentId]);
 
   const fetchKnowledge = async () => {
+    setLoading(true);
+    setError("");
     try {
       const res = await fetch(`${API_BASE_URL}/content/${contentId}/knowledge`, {
-        headers: { 'X-Admin-Token': ADMIN_TOKEN }
+        headers: { 'X-Admin-Token': ADMIN_TOKEN },
+        cache: 'no-store'
       });
-      if (!res.ok) throw new Error("Failed to load knowledge graph");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to load knowledge graph (HTTP ${res.status})`);
+      }
       const data = await res.json();
       setKnowledge(data);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Knowledge unavailable");
     } finally {
       setLoading(false);
     }
@@ -41,14 +47,30 @@ function KnowledgeInspectorInner() {
   if (loading) return (
     <div className="flex flex-col items-center justify-center py-32 space-y-4">
       <div className="w-10 h-10 border-4 border-white/10 border-t-[#F5B800] rounded-full animate-spin" />
-      <div className="text-white/40 text-sm uppercase tracking-widest animate-pulse">Loading Intelligence...</div>
+      <div className="text-white/40 text-sm uppercase tracking-widest animate-pulse">Loading knowledge...</div>
     </div>
   );
 
-  if (error) return (
-    <div className="p-6 rounded-2xl bg-red-500/5 border border-red-500/20 max-w-4xl mx-auto mt-10">
-      <h3 className="text-red-400 font-medium mb-1">Failed to load</h3>
-      <p className="text-red-400/70 text-sm">{error}</p>
+  if (error || !knowledge) return (
+    <div className="max-w-4xl mx-auto py-20 px-4">
+      <Link href={`/content/${contentId}`} className="text-white/50 hover:text-white text-sm mb-6 inline-flex items-center gap-2">
+        &larr; Back to Content Pipeline
+      </Link>
+      <div className="p-8 rounded-2xl bg-white/[0.02] border border-white/10 text-center space-y-4">
+        <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto text-red-400">
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+        </div>
+        <h3 className="text-xl font-light text-white">Knowledge unavailable</h3>
+        <p className="text-white/50 text-sm max-w-md mx-auto">{error || "Unable to locate or load the extracted knowledge graph artifact."}</p>
+        <div className="pt-2 flex items-center justify-center gap-3">
+          <button
+            onClick={fetchKnowledge}
+            className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold tracking-wide transition-all"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
     </div>
   );
 

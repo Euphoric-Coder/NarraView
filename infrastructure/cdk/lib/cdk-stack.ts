@@ -68,7 +68,7 @@ export class CdkStack extends cdk.Stack {
     // Grant Transcribe Start permission
     contentLambda.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['transcribe:StartTranscriptionJob'],
+      actions: ['transcribe:StartTranscriptionJob', 'transcribe:GetTranscriptionJob'],
       resources: ['*'] // StartTranscriptionJob doesn't support resource-level ARNs
     }));
 
@@ -293,6 +293,9 @@ export class CdkStack extends cdk.Stack {
     const contentIdResource = contentResource.addResource('{contentId}');
     contentIdResource.addMethod('GET', contentIntegration);
     contentIdResource.addMethod('PATCH', contentIntegration);
+    
+    const mediaUrlResource = contentIdResource.addResource('media-url');
+    mediaUrlResource.addMethod('GET', contentIntegration);
     
     const transcribeResource = contentIdResource.addResource('transcribe');
     transcribeResource.addMethod('POST', contentIntegration);

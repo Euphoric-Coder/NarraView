@@ -125,23 +125,49 @@ function IntelligenceViewerInner() {
   const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "people_entities" | "concepts_facts" | "relationships" | "temporal_index">("overview");
   const [recompiling, setRecompiling] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
+  const [availableVersions, setAvailableVersions] = useState<string[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<string>("latest");
 
   useEffect(() => {
-    fetchIntelligence();
+    fetchIntelligence("latest");
+    fetchVersions();
   }, [contentId]);
 
-  const fetchIntelligence = async () => {
+  const fetchVersions = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/content/${contentId}/intelligence/versions`, {
+        headers: { 'X-Admin-Token': ADMIN_TOKEN },
+        cache: 'no-store'
+      });
+      if (res.ok) {
+        const vData = await res.json();
+        if (Array.isArray(vData.versions)) {
+          setAvailableVersions(vData.versions);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to fetch versions:", e);
+    }
+  };
+
+  const fetchIntelligence = async (version = selectedVersion) => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_BASE_URL}/content/${contentId}/intelligence`, {
-        headers: { 'X-Admin-Token': ADMIN_TOKEN }
+      const endpoint = (version && version !== "latest")
+        ? `${API_BASE_URL}/content/${contentId}/intelligence/${version}`
+        : `${API_BASE_URL}/content/${contentId}/intelligence`;
+
+      const res = await fetch(endpoint, {
+        headers: { 'X-Admin-Token': ADMIN_TOKEN },
+        cache: 'no-store'
       });
       if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
         if (res.status === 404) {
-          throw new Error("No compiled intelligence package found. Please trigger compilation first.");
+          throw new Error(errorData.error || "No compiled intelligence package found. Please trigger compilation first.");
         }
-        throw new Error("Failed to load content intelligence");
+        throw new Error(errorData.error || `Failed to load content intelligence (HTTP ${res.status})`);
       }
       const json = await res.json();
       setData(json);
@@ -197,7 +223,16 @@ function IntelligenceViewerInner() {
         </div>
         <h3 className="text-xl font-light text-white">Intelligence Package Not Ready</h3>
         <p className="text-white/50 text-sm max-w-md mx-auto">{error || "Please compile the intelligence package from the pipeline."}</p>
-        <div className="pt-2">
+        <div className="pt-2 flex items-center justify-center gap-3">
+          <button
+            onClick={() => {
+              fetchIntelligence(selectedVersion);
+              fetchVersions();
+            }}
+            className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold tracking-wide transition-all"
+          >
+            Retry
+          </button>
           <Link
             href={`/content/${contentId}`}
             className="inline-flex items-center gap-2 bg-[#F5B800] text-black text-xs font-semibold uppercase tracking-widest px-5 py-2.5 rounded-lg hover:bg-[#F5B800]/90 transition-all"
@@ -228,6 +263,25 @@ function IntelligenceViewerInner() {
             <span className="text-xs font-mono font-bold bg-[#F5B800] text-black px-2.5 py-1 rounded-md shadow-md shadow-[#F5B800]/20">
               v{data.intelligenceVersion}
             </span>
+            {availableVersions.length > 0 && (
+              <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-white/40">Version:</span>
+                <select
+                  value={selectedVersion}
+                  onChange={(e) => {
+                    const newVer = e.target.value;
+                    setSelectedVersion(newVer);
+                    fetchIntelligence(newVer);
+                  }}
+                  className="bg-transparent text-xs font-mono font-semibold text-[#F5B800] focus:outline-none cursor-pointer"
+                >
+                  <option value="latest" className="bg-[#07090E] text-white">Latest</option>
+                  {availableVersions.map(v => (
+                    <option key={v} value={v} className="bg-[#07090E] text-white">{v}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <p className="text-white/40 font-mono mt-2 tracking-widest uppercase text-xs flex items-center gap-3">
             <span>Title: <strong className="text-white/80">{data.content.title}</strong></span>

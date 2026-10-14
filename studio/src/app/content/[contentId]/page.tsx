@@ -11,11 +11,13 @@ function ContentDetailInner() {
   const contentId = params.contentId as string;
   
   const [content, setContent] = useState<any>(null);
+  const canonicalContentId = content?.contentId || contentId;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   
   // Action in-flight states
   const [executingStage, setExecutingStage] = useState<string | null>(null);
+  const [stageErrors, setStageErrors] = useState<Record<string, { message: string; requestId?: string }>>({});
   const [showReprocessModal, setShowReprocessModal] = useState(false);
   const [reprocessStartFrom, setReprocessStartFrom] = useState<'transcript_correction' | 'transcription'>('transcript_correction');
   const [reprocessLoading, setReprocessLoading] = useState(false);
@@ -85,13 +87,13 @@ function ContentDetailInner() {
   };
 
   const isPipelineActive = content?.processing?.pipelineStatus === 'processing' || content?.processing?.pipelineStatus === 'queued';
-  const isReferenceTitle = contentId === 'signal-lost' || content?.isReferenceTitle;
+  const isReferenceTitle = canonicalContentId === 'signal-lost' || content?.isReferenceTitle;
 
   // Reprocess AI Pipeline
   const handleReprocessPipeline = async (startFrom: 'transcript_correction' | 'transcription' | 'scene_detection' | 'knowledge_extraction' | 'intelligence_compilation') => {
     setReprocessLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/content/${contentId}/pipeline/reprocess`, {
+      const res = await fetch(`${API_BASE_URL}/content/${canonicalContentId}/pipeline/reprocess`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -106,7 +108,10 @@ function ContentDetailInner() {
       setShowReprocessModal(false);
       await fetchDetail(true);
     } catch (err: any) {
-      alert(`Error starting pipeline reprocess: ${err.message}`);
+      setStageErrors(prev => ({
+        ...prev,
+        pipeline: { message: err.message || "Failed to start pipeline reprocessing", requestId: err.requestId }
+      }));
     } finally {
       setReprocessLoading(false);
     }
@@ -115,12 +120,21 @@ function ContentDetailInner() {
   // Individual Stage Handlers
   const triggerStage = async (stage: string, url: string, confirmMsg: string) => {
     if (isPipelineActive) {
-      alert("A full AI pipeline reprocessing job is currently active. Individual actions are temporarily locked.");
+      setStageErrors(prev => ({
+        ...prev,
+        [stage]: { message: "A full AI pipeline reprocessing job is currently active. Individual actions are temporarily locked." }
+      }));
       return;
     }
     if (!confirm(confirmMsg)) return;
 
     setExecutingStage(stage);
+    setStageErrors(prev => {
+      const copy = { ...prev };
+      delete copy[stage];
+      return copy;
+    });
+
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -130,11 +144,19 @@ function ContentDetailInner() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || `Failed to execute ${stage}`);
+        const errObj: any = new Error(data.error || `Failed to execute ${stage}`);
+        errObj.requestId = data.requestId;
+        throw errObj;
       }
       await fetchDetail(true);
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      setStageErrors(prev => ({
+        ...prev,
+        [stage]: {
+          message: err.message || `Unable to start ${stage}.`,
+          requestId: err.requestId
+        }
+      }));
     } finally {
       setExecutingStage(null);
     }
@@ -144,35 +166,35 @@ function ContentDetailInner() {
     const msg = isRerun 
       ? "Re-running Amazon Transcribe will invalidate ALL downstream stages (Transcript Correction, Scene Detection, Knowledge Extraction, Content Intelligence) as STALE. Continue?"
       : "Are you sure you want to start transcription for this media?";
-    triggerStage('transcription', `${API_BASE_URL}/content/${contentId}/transcribe`, msg);
+    triggerStage('transcription', `${API_BASE_URL}/content/${canonicalContentId}/transcribe`, msg);
   };
 
   const handleCorrection = (isRerun = false) => {
     const msg = isRerun
       ? "Re-running Transcript Correction will invalidate downstream stages (Scene Detection, Knowledge Extraction, Content Intelligence) as STALE. Continue?"
       : "Start AI Transcript Correction & Normalization?";
-    triggerStage('correction', `${API_BASE_URL}/content/${contentId}/transcript/correct`, msg);
+    triggerStage('correction', `${API_BASE_URL}/content/${canonicalContentId}/transcript/correct`, msg);
   };
 
   const handleSegmentation = (isRerun = false) => {
     const msg = isRerun
       ? "Re-running Scene Boundary Detection will invalidate downstream stages (Knowledge Extraction, Content Intelligence) as STALE. Continue?"
       : "Start Scene/Segment detection for this media?";
-    triggerStage('segmentation', `${API_BASE_URL}/content/${contentId}/segments/detect`, msg);
+    triggerStage('segmentation', `${API_BASE_URL}/content/${canonicalContentId}/segments/detect`, msg);
   };
 
   const handleKnowledge = (isRerun = false) => {
     const msg = isRerun
       ? "Re-running Knowledge Graph Extraction will invalidate Content Intelligence as STALE. Continue?"
       : "Start Knowledge Graph Extraction for this media?";
-    triggerStage('knowledge', `${API_BASE_URL}/content/${contentId}/knowledge/extract`, msg);
+    triggerStage('knowledge', `${API_BASE_URL}/content/${canonicalContentId}/knowledge/extract`, msg);
   };
 
   const handleIntelligence = (isRecompile = false) => {
     const msg = isRecompile
       ? "Compile a new immutable Content Intelligence version (vN)? Previous versions will remain preserved in history."
       : "Compile Canonical Content Intelligence Package?";
-    triggerStage('intelligence', `${API_BASE_URL}/content/${contentId}/intelligence/compile`, msg);
+    triggerStage('intelligence', `${API_BASE_URL}/content/${canonicalContentId}/intelligence/compile`, msg);
   };
 
   if (loading) return (
@@ -217,7 +239,7 @@ function ContentDetailInner() {
           <div className="flex items-center gap-4">
             <h1 className="text-3xl font-light tracking-wide text-white/90">{content.title}</h1>
             <span className="text-[10px] font-mono uppercase tracking-widest px-2.5 py-1 rounded border border-white/10 bg-white/5 text-white/70">
-              {contentId}
+              {canonicalContentId}
             </span>
           </div>
         </div>
@@ -356,16 +378,14 @@ function ContentDetailInner() {
               </div>
               <div className="col-span-2 pt-4 border-t border-white/5">
                 <span className="block text-xs uppercase tracking-widest text-white/40 mb-4">Stream Source</span>
-                {content.videoUrl ? (
-                  <a 
-                    href={content.videoUrl} 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
+                {content.mediaPlayable !== false ? (
+                  <Link 
+                    href={`/content/${canonicalContentId}/media`} 
                     className="group/btn inline-flex items-center justify-center gap-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white py-2.5 px-5 rounded-lg transition-all duration-300"
                   >
                     <svg className="w-4 h-4 text-[#F5B800] transition-transform group-hover/btn:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     <span className="font-medium tracking-wide text-sm">Launch Media</span>
-                  </a>
+                  </Link>
                 ) : (
                   <span className="text-white/30 text-sm italic">No stream URI registered</span>
                 )}
@@ -470,48 +490,73 @@ function ContentDetailInner() {
               />
 
               {/* 2. Amazon Transcribe Pipeline */}
-              <TimelineItem 
-                number="2"
-                label="Amazon Transcribe" 
-                status={tStatus} 
-                active={tStatus === 'complete'}
-                isStale={tStatus === 'stale'}
-                action={
-                  tStatus === 'processing' || tStatus === 'queued' ? (
-                    <div className="ml-4 text-xs font-mono text-white/40 flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-white/40 animate-pulse" />
-                      Running...
-                    </div>
-                  ) : tStatus === 'not_started' || tStatus === 'failed' ? (
-                    <button 
-                      onClick={() => handleTranscribe(false)} 
-                      disabled={executingStage === 'transcription' || !content.mediaPlayable || isPipelineActive}
-                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
-                    >
-                      {executingStage === 'transcription' && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
-                      {tStatus === 'failed' ? 'Retry Transcribe' : 'Run Transcribe'}
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-2 ml-4">
-                      <Link 
-                        href={`/content/${contentId}/transcript?view=raw`} 
-                        className="text-xs font-bold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
+              <div>
+                <TimelineItem 
+                  number="2"
+                  label="Amazon Transcribe" 
+                  status={stageErrors['transcription'] ? 'failed' : tStatus} 
+                  active={!stageErrors['transcription'] && tStatus === 'complete'}
+                  isStale={!stageErrors['transcription'] && tStatus === 'stale'}
+                  action={
+                    tStatus === 'processing' || tStatus === 'queued' ? (
+                      <div className="ml-4 text-xs font-mono text-white/40 flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-white/40 animate-pulse" />
+                        Running...
+                      </div>
+                    ) : tStatus === 'not_started' || tStatus === 'failed' || stageErrors['transcription'] ? (
+                      <button 
+                        onClick={() => {
+                          setStageErrors(prev => { const c = { ...prev }; delete c['transcription']; return c; });
+                          handleTranscribe(false);
+                        }} 
+                        disabled={executingStage === 'transcription' || !content.mediaPlayable || isPipelineActive}
+                        className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
                       >
-                        View Transcript
-                        <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                      </Link>
-                      <button
-                        onClick={() => handleTranscribe(true)}
-                        disabled={executingStage === 'transcription' || isPipelineActive}
-                        title="Re-running Transcribe invalidates all downstream stages as STALE"
-                        className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30"
-                      >
-                        Re-run
+                        {executingStage === 'transcription' && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
+                        {tStatus === 'failed' || stageErrors['transcription'] ? 'Retry Transcribe' : 'Run Transcribe'}
                       </button>
+                    ) : (
+                      <div className="flex items-center gap-2 ml-4">
+                        <Link 
+                          href={`/content/${canonicalContentId}/transcript?view=raw`} 
+                          className="text-xs font-bold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
+                        >
+                          View Transcript
+                          <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        </Link>
+                        <button
+                          onClick={() => handleTranscribe(true)}
+                          disabled={executingStage === 'transcription' || isPipelineActive}
+                          title="Re-running Transcribe invalidates all downstream stages as STALE"
+                          className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30"
+                        >
+                          Re-run
+                        </button>
+                      </div>
+                    )
+                  }
+                />
+                {stageErrors['transcription'] && (
+                  <div className="mt-2 ml-5 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-300 flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold text-red-400">Unable to start transcription.</div>
+                      <div className="text-white/60 text-[11px] mt-0.5">{stageErrors['transcription'].message}</div>
+                      {stageErrors['transcription'].requestId && (
+                        <div className="text-white/40 text-[10px] font-mono mt-0.5">Request ID: {stageErrors['transcription'].requestId}</div>
+                      )}
                     </div>
-                  )
-                }
-              />
+                    <button
+                      onClick={() => {
+                        setStageErrors(prev => { const c = { ...prev }; delete c['transcription']; return c; });
+                        handleTranscribe(tStatus === 'complete');
+                      }}
+                      className="ml-3 px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-medium text-xs whitespace-nowrap cursor-pointer transition-colors"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {/* 3. Transcript Correction / Normalization Layer */}
               <TimelineItem 
@@ -562,7 +607,7 @@ function ContentDetailInner() {
                         </span>
                       )}
                       <Link 
-                        href={`/content/${contentId}/transcript?view=corrected`} 
+                        href={`/content/${canonicalContentId}/transcript?view=corrected`} 
                         className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
                       >
                         View Corrected Transcript
@@ -606,7 +651,7 @@ function ContentDetailInner() {
                   ) : (
                     <div className="flex items-center gap-2 ml-4">
                       <Link 
-                        href={`/content/${contentId}/segments`} 
+                        href={`/content/${canonicalContentId}/segments`} 
                         className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
                       >
                         View Segments
@@ -651,7 +696,7 @@ function ContentDetailInner() {
                   ) : (
                     <div className="flex items-center gap-2 ml-4">
                       <Link 
-                        href={`/content/${contentId}/knowledge`} 
+                        href={`/content/${canonicalContentId}/knowledge`} 
                         className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
                       >
                         View Knowledge
@@ -696,7 +741,7 @@ function ContentDetailInner() {
                   ) : (
                     <div className="flex items-center gap-2 ml-4">
                       <Link 
-                        href={`/content/${contentId}/intelligence`} 
+                        href={`/content/${canonicalContentId}/intelligence`} 
                         className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
                       >
                         View Intelligence
