@@ -15,7 +15,7 @@ export default function Home() {
 
   const fetchContent = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/content`, {
+      const res = await fetch(`${API_BASE_URL}/content?all=true`, {
         headers: {
           'X-Admin-Token': ADMIN_TOKEN
         }
@@ -98,7 +98,12 @@ export default function Home() {
                   )}
                   
                   {/* Status Overlay */}
-                  <div className="absolute top-4 right-4 flex gap-2">
+                  <div className="absolute top-4 right-4 flex flex-col gap-1.5 items-end">
+                    {item.catalogVisible === false && (
+                      <div className="bg-amber-400 text-black px-2 py-0.5 rounded text-[9px] font-extrabold tracking-wider uppercase shadow-lg">
+                        Legacy / Hidden
+                      </div>
+                    )}
                     {item.mediaPlayable && (
                       <div className="bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-md text-[10px] font-bold tracking-widest text-white border border-white/10 shadow-lg">
                         MEDIA
@@ -111,7 +116,14 @@ export default function Home() {
                 </div>
                 
                 <div className="p-6 flex flex-col flex-grow relative z-10">
-                  <h3 className="text-xl font-light text-white/90 mb-1 group-hover:text-white transition-colors line-clamp-1">{item.title}</h3>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-xl font-light text-white/90 group-hover:text-white transition-colors line-clamp-1">{item.title}</h3>
+                    {item.catalogVisible === false && (
+                      <span className="text-[10px] font-mono text-amber-400 bg-amber-400/10 border border-amber-400/20 px-1.5 py-0.5 rounded shrink-0">
+                        Legacy / Hidden
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-white/30 font-mono mb-6">{item.contentId}</p>
                   
                   <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between">

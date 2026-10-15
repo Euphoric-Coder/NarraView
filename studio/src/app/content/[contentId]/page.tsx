@@ -197,6 +197,54 @@ function ContentDetailInner() {
     triggerStage('intelligence', `${API_BASE_URL}/content/${canonicalContentId}/intelligence/compile`, msg);
   };
 
+  const handleActivateAi = async () => {
+    if (!confirm("Activate NarraView AI for this title? This enables generic Temporal RAG for viewers.")) return;
+    setExecutingStage('activate');
+    try {
+      const res = await fetch(`${API_BASE_URL}/content/${canonicalContentId}/ai/activate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Token": ADMIN_TOKEN,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const reasons = data.reasons ? data.reasons.join("\n- ") : (data.error || "Prerequisites not met");
+        alert(`AI Activation Failed:\n- ${reasons}`);
+      } else {
+        alert("✅ NarraView AI Activated! Temporal RAG is now live for this title.");
+        fetchDetail();
+      }
+    } catch (err: any) {
+      alert(`Activation error: ${err.message}`);
+    } finally {
+      setExecutingStage(null);
+    }
+  };
+
+  const handleDeactivateAi = async () => {
+    if (!confirm("Deactivate NarraView AI for this title? Runtime queries will fail closed.")) return;
+    setExecutingStage('deactivate');
+    try {
+      const res = await fetch(`${API_BASE_URL}/content/${canonicalContentId}/ai/deactivate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Token": ADMIN_TOKEN,
+        },
+      });
+      if (res.ok) {
+        alert("NarraView AI deactivated.");
+        fetchDetail();
+      }
+    } catch (err: any) {
+      alert(`Deactivation error: ${err.message}`);
+    } finally {
+      setExecutingStage(null);
+    }
+  };
+
   if (loading) return (
     <div className="flex flex-col items-center justify-center py-32 space-y-4">
       <div className="w-10 h-10 border-4 border-white/10 border-t-[#F5B800] rounded-full animate-spin" />
@@ -766,6 +814,26 @@ function ContentDetailInner() {
                   status={content.aiReady ? "Armed" : "Offline"} 
                   active={content.aiReady} 
                   isAccent 
+                  action={
+                    content.aiReady ? (
+                      <button
+                        onClick={handleDeactivateAi}
+                        disabled={executingStage === "deactivate"}
+                        className="text-xs uppercase tracking-wider font-semibold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-lg transition-all"
+                      >
+                        {executingStage === "deactivate" ? "Deactivating..." : "Deactivate"}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleActivateAi}
+                        disabled={executingStage === "activate" || !content.intelligence?.latestVersion}
+                        title={!content.intelligence?.latestVersion ? "Requires completed intelligence package" : "Activate generic Temporal RAG runtime"}
+                        className="text-xs uppercase tracking-wider font-semibold bg-[#F5B800] hover:bg-[#F5B800]/90 text-black px-3 py-1.5 rounded-lg font-bold transition-all shadow-md shadow-[#F5B800]/20 disabled:opacity-40"
+                      >
+                        {executingStage === "activate" ? "Activating..." : "Activate AI"}
+                      </button>
+                    )
+                  }
                 />
               </div>
             </div>

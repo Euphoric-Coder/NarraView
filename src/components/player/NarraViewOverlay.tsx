@@ -12,6 +12,7 @@ interface NarraViewOverlayProps {
   currentTimeSeconds: number;
   contextTimestamp?: number;
   currentScene?: any;
+  runtimeProvider?: "handcrafted" | "intelligence";
 }
 
 type OverlayState = 'idle' | 'custom-input' | 'loading' | 'success' | 'error';
@@ -73,14 +74,14 @@ const CompactOptionCard = ({ label, onPress, hasTVPreferredFocus }: any) => {
   );
 };
 
-export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, currentScene }: NarraViewOverlayProps) => {
+export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, currentScene, runtimeProvider }: NarraViewOverlayProps) => {
   const [fadeAnim] = useState(new Animated.Value(0));
   const [overlayState, setOverlayState] = useState<OverlayState>('idle');
   const [customQuestion, setCustomQuestion] = useState('');
   const inputRef = useRef<TextInput>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const activeRequestId = useRef<number>(0);
+  const activeRequestId = useRef<string | number>(0);
   const [lastSelectedActionId, setLastSelectedActionId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -108,16 +109,24 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
       useNativeDriver: true,
     }).start();
     
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      handleBackPress();
-      return true;
-    });
-    return () => backHandler.remove();
+    let backHandler: any = null;
+    if (BackHandler && typeof BackHandler.addEventListener === 'function') {
+      backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+        handleBackPress();
+        return true;
+      });
+    }
+    return () => backHandler?.remove?.();
   }, []);
 
   const handleBackPress = () => {
     if (overlayState === 'custom-input') {
       Keyboard.dismiss();
+      setOverlayState('idle');
+      return;
+    }
+    if (overlayState === 'loading') {
+      activeRequestId.current = 0;
       setOverlayState('idle');
       return;
     }
@@ -157,22 +166,49 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
     setLastSelectedActionId(action.id);
     scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     
-    const requestId = Date.now();
-    activeRequestId.current = requestId;
+    const reqIdStr = `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    activeRequestId.current = reqIdStr;
+    const requestTimestamp = currentTimeSeconds;
+
+    console.log("[NARRAVIEW_REQUEST]", {
+      contentId,
+      viewerTimestamp: requestTimestamp,
+      mode: action.mode,
+      question: query,
+      requestId: reqIdStr,
+      runtimeProvider
+    });
 
     try {
-      const response = await askNarraView({ contentId, timestamp: currentTimeSeconds, mode: action.mode, question: query, scene: currentScene });
-      if (activeRequestId.current === requestId) {
-        // Fallback to the requested mode if backend omitted it
-        setCurrentResponse({
-          ...response,
-          mode: response.mode || action.mode
+      const response = await askNarraView({
+        contentId,
+        timestamp: requestTimestamp,
+        viewerTimestamp: requestTimestamp,
+        mode: action.mode,
+        question: query,
+        requestId: reqIdStr,
+        scene: currentScene
+      });
+      
+      // Stale request guard: discard response if request became stale
+      if (activeRequestId.current !== reqIdStr) {
+        console.log('[NarraView Stale Guard] Response discarded:', {
+          requestId: reqIdStr,
+          requestViewerTimestamp: requestTimestamp,
+          currentViewerTimestamp: currentTimeSeconds,
+          responseDiscarded: true
         });
-        setOverlayState('success');
-        setCustomQuestion('');
+        return;
       }
+
+      setCurrentResponse({
+        ...response,
+        mode: response.mode || action.mode
+      });
+      setOverlayState('success');
+      setCustomQuestion('');
     } catch (error) {
-      if (activeRequestId.current === requestId) {
+      if (activeRequestId.current === reqIdStr) {
         console.error("NarraView API Error:", error);
         setOverlayState('error');
       }

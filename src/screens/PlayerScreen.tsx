@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, BackHandler, Text, ActivityIndicator, TVEventHandler as RNTVEventHandler } from 'react-native';
 
-import { ContentItem } from '../types/content';
+import { ContentItem, RuntimeProvider } from '../types/content';
 import { VideoPlayer } from '../components/player/VideoPlayer';
 import { PlayerControls } from '../components/player/PlayerControls';
 import { NarraViewOverlay } from '../components/player/NarraViewOverlay';
 import { usePlaybackState } from '../player/usePlaybackState';
 import { FocusableButton } from '../components/FocusableButton';
 import { getCurrentScene } from '../utils/getCurrentScene';
+import { getContent } from '../services/contentApi';
 
 interface PlayerScreenProps {
   item: ContentItem;
@@ -15,11 +16,15 @@ interface PlayerScreenProps {
 }
 
 export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
+  const [playerItem, setPlayerItem] = useState<ContentItem>(item);
   const videoRef = useRef<any>(null);
   const [isNarraViewOpen, setIsNarraViewOpen] = useState(false);
   const wasPlayingBeforeNarraViewRef = useRef(false);
   const [frozenTimestamp, setFrozenTimestamp] = useState(0);
-  
+
+  const canonicalContentId = playerItem.contentId || playerItem.id;
+  const isAiReady = playerItem.aiReady === true || canonicalContentId === 'signal-lost';
+
   const {
     isPlaying,
     currentTimeSeconds,
@@ -38,20 +43,70 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     clearHideControlsTimer
   } = usePlaybackState();
 
-  const currentScene = getCurrentScene(item.scenes, currentTimeSeconds);
+  const currentScene = getCurrentScene(playerItem.scenes, currentTimeSeconds);
   const currentSceneLabel = currentScene?.label;
 
-  const source = item.videoSource?.trim();
+  const source = playerItem.videoSource?.trim();
 
   useEffect(() => {
-    console.log('[NarraView] content:', item.id);
+    let isMounted = true;
+    const cid = item.contentId || item.id;
+
+    console.log('[PLAYER_CONTENT_STATE]', {
+      contentId: cid,
+      title: item.title,
+      aiReady: item.aiReady,
+      runtimeProvider: item.runtimeProvider,
+      mediaPlayable: item.mediaPlayable
+    });
+
+    const verifyFreshState = async () => {
+      if (!cid) return;
+      const latest = await getContent(cid);
+      if (latest && isMounted) {
+        const freshContentId = latest.contentId || cid;
+        const runtimeProvider: RuntimeProvider | undefined = freshContentId === 'signal-lost'
+          ? 'handcrafted'
+          : (latest.runtimeProvider || (latest.aiReady ? 'intelligence' : undefined));
+
+        const updated: ContentItem = {
+          ...item,
+          id: freshContentId,
+          contentId: freshContentId,
+          title: latest.title || item.title,
+          description: latest.description || item.description,
+          videoSource: latest.videoUrl || item.videoSource,
+          aiReady: latest.aiReady === true,
+          runtimeProvider,
+          mediaPlayable: latest.mediaPlayable !== false,
+          durationSeconds: typeof latest.durationSeconds === 'number' ? latest.durationSeconds : item.durationSeconds
+        };
+
+        setPlayerItem(updated);
+
+        console.log('[PLAYER_CONTENT_STATE] (verified live)', {
+          contentId: updated.contentId,
+          title: updated.title,
+          aiReady: updated.aiReady,
+          runtimeProvider: updated.runtimeProvider,
+          mediaPlayable: updated.mediaPlayable
+        });
+      }
+    };
+
+    verifyFreshState();
+    return () => { isMounted = false; };
+  }, [item]);
+
+  useEffect(() => {
+    console.log('[NarraView] content:', canonicalContentId);
     if (source && source.startsWith('https://')) {
       try {
         const urlObj = new URL(source);
         console.log('[NarraView] source host:', (urlObj as any).hostname);
       } catch (e) {}
     }
-  }, [item, source]);
+  }, [canonicalContentId, source]);
 
   useEffect(() => {
     const backAction = () => {
@@ -64,8 +119,11 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
       return true;
     };
 
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
-    return () => backHandler.remove();
+    let backHandler: any = null;
+    if (BackHandler && typeof BackHandler.addEventListener === 'function') {
+      backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    }
+    return () => backHandler?.remove?.();
   }, [isNarraViewOpen, onExit, clearHideControlsTimer, isPlaying]);
 
   useEffect(() => {
@@ -91,13 +149,13 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
       timeout = setTimeout(() => {
         setIsBuffering(false);
         setHasError(true);
-        setErrorMessage("We couldn't load " + item.title + ".");
+        setErrorMessage("We couldn't load " + playerItem.title + ".");
       }, 10000);
     }
     return () => {
       if (timeout) clearTimeout(timeout);
     };
-  }, [isBuffering, isPlaying, hasError, source, item.title, setIsBuffering, setHasError, setErrorMessage]);
+  }, [isBuffering, isPlaying, hasError, source, playerItem.title, setIsBuffering, setHasError, setErrorMessage]);
 
   const handleSeekBack = () => {
     if (isNarraViewOpen) return;
@@ -132,6 +190,19 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
   };
 
   const handleOpenNarraView = () => {
+    const allowed = isAiReady;
+    const reason = allowed
+      ? (canonicalContentId === 'signal-lost' || playerItem.runtimeProvider === 'handcrafted' ? 'handcrafted_ready' : 'backend_ai_ready')
+      : 'backend_not_ready';
+
+    console.log('[NARRAVIEW_GATE_CHECK]', {
+      contentId: canonicalContentId,
+      aiReady: playerItem.aiReady,
+      runtimeProvider: playerItem.runtimeProvider,
+      allowed,
+      reason
+    });
+
     wasPlayingBeforeNarraViewRef.current = isPlaying;
     if (isPlaying) {
       setIsPlaying(false);
@@ -180,7 +251,6 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     );
   }
 
-  // When NarraView overlay is open, standard player controls should be hidden/uninteractable
   const shouldShowPlayerControls = isControlsVisible && !isNarraViewOpen;
 
   return (
@@ -207,7 +277,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
         }}
         onError={() => {
           setHasError(true);
-          setErrorMessage("We couldn't load " + item.title + ".");
+          setErrorMessage("We couldn't load " + playerItem.title + ".");
         }}
         onPlayingChange={(playing) => {
           setIsPlaying(playing);
@@ -217,7 +287,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
       {isBuffering && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#ffffff" />
-          <Text style={styles.loadingText}>Loading {item.title}...</Text>
+          <Text style={styles.loadingText}>Loading {playerItem.title}...</Text>
         </View>
       )}
 
@@ -229,7 +299,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
         pointerEvents={shouldShowPlayerControls ? 'auto' : 'none'}
       >
         <PlayerControls
-          title={item.title}
+          title={playerItem.title}
           currentScene={currentSceneLabel}
           currentTimeSeconds={currentTimeSeconds}
           durationSeconds={durationSeconds}
@@ -243,7 +313,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
         />
       </View>
 
-      {isNarraViewOpen && item.aiReady === false ? (
+      {isNarraViewOpen && !isAiReady ? (
         <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(10,10,12,0.95)', justifyContent: 'center', alignItems: 'center', zIndex: 100 }]}>
           <Text style={{ color: '#F5B800', fontSize: 32, fontWeight: '700', letterSpacing: 2, marginBottom: 16 }}>NARRAVIEW</Text>
           <Text style={{ color: '#ffffff', fontSize: 20, opacity: 0.8, marginBottom: 48 }}>NarraView intelligence for this title is still being prepared.</Text>
@@ -263,7 +333,8 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
         </View>
       ) : isNarraViewOpen ? (
         <NarraViewOverlay
-          contentId={item.id}
+          contentId={canonicalContentId}
+          runtimeProvider={playerItem.runtimeProvider}
           currentTimeSeconds={currentTimeSeconds}
           currentScene={currentScene}
           onClose={handleCloseNarraView}
@@ -280,12 +351,18 @@ const styles = StyleSheet.create({
   errorText: { color: '#ffffff', fontSize: 24, marginBottom: 20 },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 10,
   },
-  loadingText: { color: '#ffffff', fontSize: 20, marginTop: 16 },
+  loadingText: {
+    color: '#ffffff',
+    fontSize: 20,
+    marginTop: 16,
+  },
   controlsContainer: {
     ...StyleSheet.absoluteFillObject,
-  }
+    zIndex: 20,
+  },
 });

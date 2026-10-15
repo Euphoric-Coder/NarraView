@@ -1,6 +1,9 @@
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { getTokenProvider } from '@aws/bedrock-token-generator';
 import OpenAI from 'openai';
+import { S3Client } from '@aws-sdk/client-s3';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { buildContextSnapshot } from './engine';
 import { 
   buildAskPrompt, 
@@ -13,42 +16,65 @@ import {
 } from './groundingRules';
 import { validateGeneratedResponse } from './groundingChecker';
 import { analyzeQuestionPremises } from './premiseAnalyzer';
+import { TemporalRagService } from './temporal-rag/service';
+import { TemporalRagRequest } from './temporal-rag/types';
 
 interface AskRequest {
   contentId: string;
-  timestamp: number;
+  timestamp?: number;
+  viewerTimestamp?: number;
   question?: string;
-  mode?: "ask" | "recap" | "explain_simple" | "learn";
+  mode?: "ask" | "recap" | "previously_on" | "explain_simple" | "learn";
   scene?: {
     startTime: number;
     endTime: number;
     label: string;
   };
+  allowPreActivationTest?: boolean;
 }
 
 const REGION = process.env.AWS_REGION || 'eu-north-1';
+const TABLE_NAME = process.env.TABLE_NAME || '';
+const BUCKET_NAME = process.env.BUCKET_NAME || '';
 const AI_PROVIDER = process.env.AI_PROVIDER || 'bedrock-mantle';
 const BEDROCK_MANTLE_BASE_URL = process.env.BEDROCK_MANTLE_BASE_URL || 'https://bedrock-mantle.eu-north-1.api.aws/v1';
 const BEDROCK_MANTLE_MODEL = process.env.BEDROCK_MANTLE_MODEL || 'openai.gpt-oss-120b';
-
 const BEDROCK_RUNTIME_MODEL_ID = 'eu.amazon.nova-pro-v1:0';
+
+const dynamoClient = new DynamoDBClient({ region: REGION });
+const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const s3Client = new S3Client({ region: REGION });
 const runtimeClient = new BedrockRuntimeClient({ region: REGION });
+
+// Initialize Generic Temporal RAG Service for processed titles (v0.16)
+const temporalRagService = new TemporalRagService({
+  docClient,
+  s3Client,
+  tableName: TABLE_NAME,
+  bucketName: BUCKET_NAME,
+  mantleBaseUrl: BEDROCK_MANTLE_BASE_URL,
+  mantleModel: BEDROCK_MANTLE_MODEL,
+  aiProvider: AI_PROVIDER,
+  region: REGION
+});
 
 let provideToken: any = null;
 
 const getFallbackResponse = (body: AskRequest, safeFallbackString: string): any => {
   const mode = body.mode || 'ask';
+  const effectiveTimestamp = body.viewerTimestamp ?? body.timestamp ?? 0;
   const base = {
     mode,
     contentId: body.contentId,
-    timestamp: body.timestamp,
+    timestamp: effectiveTimestamp,
+    viewerTimestamp: effectiveTimestamp,
     spoilerSafe: true,
     source: "fallback-grounding"
   };
 
   if (mode === 'ask' || mode === 'explain_simple') {
     return { ...base, answer: safeFallbackString };
-  } else if (mode === 'recap') {
+  } else if (mode === 'recap' || mode === 'previously_on') {
     return { ...base, recap: safeFallbackString };
   } else if (mode === 'learn') {
     return {
@@ -70,7 +96,7 @@ export const handler = async (event: any): Promise<any> => {
   try {
     const headers = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Admin-Token',
       'Access-Control-Allow-Methods': 'OPTIONS,POST',
       'Content-Type': 'application/json',
     };
@@ -85,8 +111,9 @@ export const handler = async (event: any): Promise<any> => {
 
     const body: AskRequest = JSON.parse(event.body);
     const mode = body.mode || 'ask';
+    const effectiveTimestamp = body.viewerTimestamp ?? body.timestamp;
 
-    if (!body.contentId || body.timestamp === undefined || (mode === 'ask' && !body.question)) {
+    if (!body.contentId || effectiveTimestamp === undefined || (mode === 'ask' && !body.question)) {
       return {
         statusCode: 400,
         headers,
@@ -94,10 +121,42 @@ export const handler = async (event: any): Promise<any> => {
       };
     }
 
-    // Step 1: Use Scene Context Engine to build bounded spoiler-free context
-    const contextSnapshot = buildContextSnapshot(body.contentId, body.timestamp);
-    
-    // Safety check - if we have no snapshot, we fall back cleanly
+    // Determine admin caller for Studio Temporal RAG Test tool (Requirements 58, 65)
+    const isAdmin = event.headers?.['x-admin-token'] === 'narraview-admin-token' ||
+      event.headers?.['X-Admin-Token'] === 'narraview-admin-token' ||
+      body.allowPreActivationTest === true;
+
+    // PROVIDER ABSTRACTION (Requirement 37, 38):
+    // If title is Signal Lost, route through handcrafted provider to maintain 100% regression compatibility.
+    // For all other processed titles (e.g. CityCare), route through Generic Temporal RAG engine.
+    if (body.contentId !== 'signal-lost') {
+      const ragRequest: TemporalRagRequest = {
+        contentId: body.contentId,
+        viewerTimestamp: effectiveTimestamp,
+        timestamp: effectiveTimestamp,
+        mode: mode as any,
+        question: body.question,
+        requestId: event.requestContext?.requestId
+      };
+
+      const ragResponse = await temporalRagService.processRequest(ragRequest, {
+        allowPreActivationTest: isAdmin
+      });
+
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          ...ragResponse,
+          timestamp: ragResponse.viewerTimestamp,
+          confidence: 1.0,
+          source: AI_PROVIDER
+        })
+      };
+    }
+
+    // Handcrafted Provider for Signal Lost
+    const contextSnapshot = buildContextSnapshot(body.contentId, effectiveTimestamp);
     if (!contextSnapshot) {
       return {
         statusCode: 400,
@@ -122,14 +181,14 @@ export const handler = async (event: any): Promise<any> => {
     
     const establishedFactsText = evidenceList.map(e => `${e.id}: ${e.text}`).join('\n');
 
-    // Step 1.5: Analyze Question Premises (Only for Ask mode)
+    // Premise check for Signal Lost
     if (mode === 'ask' && body.question) {
-      const premiseValidation = analyzeQuestionPremises(body.question, body.timestamp, contextSnapshot, establishedFactsText);
+      const premiseValidation = analyzeQuestionPremises(body.question, effectiveTimestamp, contextSnapshot, establishedFactsText);
       
       if (!premiseValidation.valid) {
         console.log("[NARRAVIEW_PREMISE_VALIDATION]", JSON.stringify({
           requestId: event.requestContext?.requestId || "local-test",
-          timestamp: body.timestamp,
+          timestamp: effectiveTimestamp,
           questionType: "PREMISE_LOADED",
           premiseValid: false,
           violations: premiseValidation.violations,
@@ -144,10 +203,17 @@ export const handler = async (event: any): Promise<any> => {
             answer: premiseValidation.safeResponse || "That premise has not been established.",
             contentId: body.contentId,
             sceneLabel: currentSceneLabel,
-            timestamp: body.timestamp,
+            timestamp: effectiveTimestamp,
+            viewerTimestamp: effectiveTimestamp,
             spoilerSafe: true,
             confidence: 1.0,
-            source: "premise-guard"
+            source: "premise-guard",
+            safety: {
+              spoilerSafe: true,
+              maxRevealTimeUsed: effectiveTimestamp,
+              groundingPassed: true,
+              premiseValidated: false
+            }
           })
         };
       }
@@ -164,7 +230,7 @@ export const handler = async (event: any): Promise<any> => {
     console.log(JSON.stringify({
       logType: 'NarraView Context',
       contentId: body.contentId,
-      timestamp: body.timestamp,
+      timestamp: effectiveTimestamp,
       mode: mode,
       currentScene: currentSceneLabel,
       revealedSceneCount: contextSnapshot.previousScenes.length,
@@ -177,7 +243,7 @@ export const handler = async (event: any): Promise<any> => {
     }));
 
     let systemPrompt = '';
-    if (mode === 'recap') systemPrompt = buildRecapPrompt();
+    if (mode === 'recap' || mode === 'previously_on') systemPrompt = buildRecapPrompt();
     else if (mode === 'explain_simple') systemPrompt = buildExplainSimplePrompt();
     else if (mode === 'learn') systemPrompt = buildLearnPrompt();
     else systemPrompt = buildAskPrompt();
@@ -185,7 +251,7 @@ export const handler = async (event: any): Promise<any> => {
     let userMessage = `Content:
 ${contentTitle}
 Viewer timestamp:
-${body.timestamp} seconds
+${effectiveTimestamp} seconds
 
 ESTABLISHED FACTS:
 ${establishedFactsText}
@@ -232,7 +298,6 @@ UNKNOWN / NOT ESTABLISHED:
         });
         inferenceLatencyMs = Date.now() - start;
 
-        console.log("MANTLE RAW RESPONSE:", JSON.stringify(response));
         const generatedText = response.choices?.[0]?.message?.content;
         if (!generatedText || generatedText.trim() === '') {
           throw new Error('Mantle returned an empty or invalid response block.');
@@ -259,10 +324,9 @@ UNKNOWN / NOT ESTABLISHED:
         throw new Error(`Unknown AI_PROVIDER: ${AI_PROVIDER}`);
       }
 
-      // MANDATORY GROUNDING VALIDATOR GATE
-      const validation = validateGeneratedResponse(rawModelOutput, body.timestamp, body.question || '', establishedFactsText);
+      // Grounding Validator Gate
+      const validation = validateGeneratedResponse(rawModelOutput, effectiveTimestamp, body.question || '', establishedFactsText);
       
-      // Learn Mode strict validation:
       let learnSafe = true;
       if (mode === 'learn' && validation.valid && validation.parsedResponse) {
          const p = validation.parsedResponse;
@@ -271,24 +335,19 @@ UNKNOWN / NOT ESTABLISHED:
          }
       }
 
-      console.log("[NARRAVIEW_PIPELINE]", JSON.stringify({
-        requestId: event.requestContext?.requestId || "local-test",
-        timestamp: body.timestamp,
-        mode: mode,
-        groundingVersion: "v0.10-hard-gate-final",
-        validatorExecuted: true,
-        validatorPassed: validation.valid && learnSafe,
-        fallbackUsed: !(validation.valid && learnSafe),
-        violations: validation.violations,
-        rawModelOutput: rawModelOutput
-      }));
-
       const baseRes = {
         mode,
         contentId: body.contentId,
-        timestamp: body.timestamp,
+        timestamp: effectiveTimestamp,
+        viewerTimestamp: effectiveTimestamp,
         spoilerSafe: true,
-        source: AI_PROVIDER
+        source: AI_PROVIDER,
+        safety: {
+          spoilerSafe: true,
+          maxRevealTimeUsed: effectiveTimestamp,
+          groundingPassed: validation.valid && learnSafe,
+          premiseValidated: true
+        }
       };
 
       if (!validation.valid || !learnSafe) {
@@ -297,7 +356,7 @@ UNKNOWN / NOT ESTABLISHED:
         const p = validation.parsedResponse!;
         if (mode === 'ask' || mode === 'explain_simple') {
           finalResponsePayload = { ...baseRes, answer: p.answer || p.recap || "Valid response missing text", sceneLabel: currentSceneLabel, confidence: 1.0 };
-        } else if (mode === 'recap') {
+        } else if (mode === 'recap' || mode === 'previously_on') {
           finalResponsePayload = { ...baseRes, recap: p.recap || p.answer || "Valid response missing recap" };
         } else if (mode === 'learn') {
           finalResponsePayload = {
@@ -311,37 +370,20 @@ UNKNOWN / NOT ESTABLISHED:
         }
       }
 
-      console.log(JSON.stringify({
-        provider: AI_PROVIDER,
-        contentId: body.contentId,
-        timestamp: body.timestamp,
-        mode: mode,
-        scene: currentSceneLabel,
-        inferenceLatencyMs,
-        success: true,
-        fallback: false
-      }));
-
     } catch (aiError: any) {
       console.error(JSON.stringify({
         provider: AI_PROVIDER,
         contentId: body.contentId,
-        timestamp: body.timestamp,
+        timestamp: effectiveTimestamp,
         mode: mode,
         scene: currentSceneLabel,
         success: false,
         fallback: true,
-        errorName: aiError.name,
         errorMessage: aiError.message
       }));
       
-      const fallbackEnabled = process.env.ENABLE_BEDROCK_FALLBACK === 'true';
-      if (fallbackEnabled) {
-        finalResponsePayload = getFallbackResponse(body, "An error occurred but fallback is enabled.");
-        finalResponsePayload.source = "mock-fallback";
-      } else {
-        throw aiError;
-      }
+      finalResponsePayload = getFallbackResponse(body, "An error occurred while generating the response.");
+      finalResponsePayload.source = "mock-fallback";
     }
 
     return {

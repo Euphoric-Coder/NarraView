@@ -16,6 +16,13 @@ export const App = () => {
     setRoute('Details');
   };
 
+  const handleWatch = (freshItem?: ContentItem) => {
+    if (freshItem) {
+      setSelectedItem(freshItem);
+    }
+    setRoute('Player');
+  };
+
   const renderScreen = () => {
     switch (route) {
       case 'Landing':
@@ -26,7 +33,7 @@ export const App = () => {
         return selectedItem ? (
           <DetailsScreen 
             item={selectedItem} 
-            onWatch={() => setRoute('Player')}
+            onWatch={handleWatch}
             onBack={() => setRoute('Home')}
           />
         ) : (

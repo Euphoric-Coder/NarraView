@@ -85,8 +85,14 @@ export const handler = async (event: any) => {
       const command = new ScanCommand({ TableName: TABLE_NAME });
       const response = await docClient.send(command);
       const items = response.Items || [];
+
+      const includeHidden = event.queryStringParameters?.all === 'true' || 
+                            event.queryStringParameters?.includeHidden === 'true';
+      const filteredItems = includeHidden 
+        ? items 
+        : items.filter((item: any) => item.catalogVisible !== false);
       
-      const resolvedItems = await Promise.all(items.map(async (item: any) => {
+      const resolvedItems = await Promise.all(filteredItems.map(async (item: any) => {
         let videoUrl = item.videoUrl;
         try {
           if (item.videoS3Key || (item.videoUrl && item.videoUrl.startsWith('s3://'))) {
@@ -109,7 +115,11 @@ export const handler = async (event: any) => {
       
       return {
         statusCode: 200,
-        headers: corsHeaders(),
+        headers: {
+          ...corsHeaders(),
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        },
         body: JSON.stringify(resolvedItems)
       };
     }
@@ -584,6 +594,7 @@ export const handler = async (event: any) => {
 
         const updated = {
           ...item,
+          aiReady: item.contentId === "signal-lost" ? item.aiReady : false,
           processing: updatedProcessing,
           transcription: {
             ...(item.transcription || {}),
@@ -615,6 +626,7 @@ export const handler = async (event: any) => {
 
       const updated = {
         ...item,
+        aiReady: item.contentId === "signal-lost" ? item.aiReady : false,
         processing: updatedProcessing,
         updatedAt: new Date().toISOString()
       };
@@ -642,6 +654,122 @@ export const handler = async (event: any) => {
           pipelineStatus: 'processing', 
           currentPipelineStage: startFrom 
         }) 
+      };
+    }
+
+    // AI Activation Endpoint (v0.16 Requirement 34)
+    if (path === "/content/{contentId}/ai/activate" && method === "POST") {
+      const contentId = event.pathParameters.contentId;
+      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = check.Item;
+      if (!item) {
+        return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: "Content not found" }) };
+      }
+
+      const reasons: string[] = [];
+      const proc = item.processing || {};
+
+      if (proc.transcriptionStatus !== "complete") reasons.push("Transcription is not complete");
+      if (proc.transcriptCorrectionStatus !== "complete") reasons.push("Transcript correction is not complete");
+      if (proc.sceneDetectionStatus !== "complete") reasons.push("Scene detection is not complete");
+      if (proc.metadataExtractionStatus !== "complete") reasons.push("Knowledge extraction is not complete");
+      if (proc.intelligenceCompilationStatus !== "complete") reasons.push("Content intelligence compilation is not complete");
+
+      if (!item.intelligence?.latestS3Key && !item.intelligence?.latestVersion) {
+        reasons.push("No compiled intelligence package exists");
+      }
+
+      if (reasons.length > 0) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders(),
+          body: JSON.stringify({
+            error: "Runtime prerequisites not met for AI activation",
+            reasons,
+            contentId
+          })
+        };
+      }
+
+      // Verify that the intelligence package actually exists in S3 and has referential integrity
+      const s3Key = item.intelligence?.latestS3Key || `content/${contentId}/intelligence/latest.json`;
+      try {
+        const s3Res = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key }));
+        const pkgStr = await s3Res.Body?.transformToString();
+        const pkg = JSON.parse(pkgStr || "{}");
+        if (pkg.quality && pkg.quality.referentialIntegrity === false) {
+          return {
+            statusCode: 400,
+            headers: corsHeaders(),
+            body: JSON.stringify({
+              error: "Referential integrity check failed on intelligence package",
+              reasons: ["Referential integrity is false in package quality report"],
+              contentId
+            })
+          };
+        }
+      } catch (s3Err: any) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders(),
+          body: JSON.stringify({
+            error: "Unable to load intelligence package from storage",
+            details: s3Err.message,
+            contentId
+          })
+        };
+      }
+
+      const updated = {
+        ...item,
+        aiReady: true,
+        runtimeProvider: "intelligence",
+        aiActivatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders(),
+        body: JSON.stringify({
+          success: true,
+          aiReady: true,
+          runtimeProvider: "intelligence",
+          contentId,
+          activatedAt: updated.aiActivatedAt
+        })
+      };
+    }
+
+    // AI Deactivation Endpoint (v0.16 Requirement 35)
+    if (path === "/content/{contentId}/ai/deactivate" && method === "POST") {
+      const contentId = event.pathParameters.contentId;
+      const check = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = check.Item;
+      if (!item) {
+        return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: "Content not found" }) };
+      }
+
+      const updated = {
+        ...item,
+        aiReady: false,
+        aiDeactivatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: updated }));
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders(),
+        body: JSON.stringify({
+          success: true,
+          aiReady: false,
+          contentId,
+          deactivatedAt: updated.aiDeactivatedAt
+        })
       };
     }
 
@@ -681,6 +809,7 @@ export const handler = async (event: any) => {
       // Intelligence recompilation does NOT invalidate upstream stages
       const updated = {
         ...item,
+        aiReady: item.contentId === "signal-lost" ? item.aiReady : false,
         processing: {
           ...item.processing,
           intelligenceCompilationStatus: 'queued',
@@ -732,6 +861,7 @@ export const handler = async (event: any) => {
 
       const updated = {
         ...item,
+        aiReady: item.contentId === "signal-lost" ? item.aiReady : false,
         processing: {
           ...invalidatedProcessing,
           transcriptCorrectionStatus: 'queued',
@@ -775,6 +905,7 @@ export const handler = async (event: any) => {
         posterS3Key: posterS3Key || null,
         posterUrl: posterUrl || null,
         mediaPlayable: !!(videoS3Key || videoUrl),
+        catalogVisible: body.catalogVisible !== false,
         aiReady: false,
         processing: {
           transcriptionStatus: 'not_started',
@@ -1055,6 +1186,7 @@ export const handler = async (event: any) => {
 
       const updated = {
         ...item,
+        aiReady: item.contentId === "signal-lost" ? item.aiReady : false,
         processing: {
           ...invalidatedProcessing,
           transcriptionStatus: 'queued',
@@ -1135,6 +1267,7 @@ export const handler = async (event: any) => {
 
       const updated = {
         ...item,
+        aiReady: item.contentId === "signal-lost" ? item.aiReady : false,
         processing: {
           ...invalidatedProcessing,
           sceneDetectionStatus: 'queued',
@@ -1183,6 +1316,7 @@ export const handler = async (event: any) => {
 
       const updated = {
         ...item,
+        aiReady: item.contentId === "signal-lost" ? item.aiReady : false,
         processing: {
           ...invalidatedProcessing,
           metadataExtractionStatus: 'queued',

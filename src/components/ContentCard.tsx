@@ -45,7 +45,7 @@ export const ContentCard = ({ item, onPress, hasTVPreferredFocus }: ContentCardP
           <ProgressBar progress={item.progress} />
         ) : (
           <Text style={styles.subtitle} numberOfLines={1}>
-            {item.genre} • {item.runtime}
+            {item.runtime ? `${item.genre} • ${item.runtime}` : item.genre}
           </Text>
         )}
       </View>

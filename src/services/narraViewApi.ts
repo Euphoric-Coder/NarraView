@@ -3,6 +3,8 @@ import { API_BASE_URL } from '../config/api';
 export interface AskNarraViewRequest {
   contentId: string;
   timestamp: number;
+  viewerTimestamp?: number;
+  requestId?: string;
   question?: string;
   mode?: "ask" | "recap" | "explain_simple" | "learn";
   scene?: {
@@ -28,6 +30,9 @@ export interface AskNarraViewResponse {
   spoilerSafe: boolean;
   confidence: number;
   source: string;
+  viewerTimestamp?: number;
+  citations?: any[];
+  safety?: any;
 }
 
 export const askNarraView = async (request: AskNarraViewRequest): Promise<AskNarraViewResponse> => {
@@ -49,7 +54,11 @@ export const askNarraView = async (request: AskNarraViewRequest): Promise<AskNar
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify({
+        ...request,
+        viewerTimestamp: request.viewerTimestamp ?? request.timestamp,
+        requestId: request.requestId || ('req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7))
+      }),
       signal: controller.signal,
     });
   } catch (error) {

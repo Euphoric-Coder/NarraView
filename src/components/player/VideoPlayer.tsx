@@ -33,7 +33,7 @@ export const VideoPlayer = React.forwardRef((props: VideoPlayerProps, ref) => {
     },
     pause: () => {
       if (videoPlayerRef.current) {
-         videoPlayerRef.current.pause();
+         videoPlayerRef.current.pause?.();
       }
     }
   }));
@@ -41,9 +41,9 @@ export const VideoPlayer = React.forwardRef((props: VideoPlayerProps, ref) => {
   useEffect(() => {
     if (videoPlayerRef.current) {
       if (props.paused) {
-        videoPlayerRef.current.pause();
+        videoPlayerRef.current.pause?.();
       } else {
-        videoPlayerRef.current.play();
+        videoPlayerRef.current.play?.();
       }
     }
   }, [props.paused]);

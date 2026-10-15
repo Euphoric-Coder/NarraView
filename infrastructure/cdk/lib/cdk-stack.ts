@@ -276,7 +276,9 @@ export class CdkStack extends cdk.Stack {
     });
 
     // Integration
-    const askSceneIntegration = new apigateway.LambdaIntegration(askSceneLambda);
+    const askSceneIntegration = new apigateway.LambdaIntegration(askSceneLambda, {
+      allowTestInvoke: false,
+    });
 
     // Route: POST /ai/ask
     const aiResource = api.root.addResource('ai');
@@ -285,7 +287,9 @@ export class CdkStack extends cdk.Stack {
 
     // Route: /content
     const contentResource = api.root.addResource('content');
-    const contentIntegration = new apigateway.LambdaIntegration(contentLambda);
+    const contentIntegration = new apigateway.LambdaIntegration(contentLambda, {
+      allowTestInvoke: false,
+    });
     
     contentResource.addMethod('GET', contentIntegration);
     contentResource.addMethod('POST', contentIntegration);
@@ -342,6 +346,13 @@ export class CdkStack extends cdk.Stack {
     const pipelineResource = contentIdResource.addResource('pipeline');
     const reprocessPipelineResource = pipelineResource.addResource('reprocess');
     reprocessPipelineResource.addMethod('POST', contentIntegration);
+
+    // AI Activation API (v0.16)
+    const contentAiResource = contentIdResource.addResource('ai');
+    const activateAiResource = contentAiResource.addResource('activate');
+    activateAiResource.addMethod('POST', contentIntegration);
+    const deactivateAiResource = contentAiResource.addResource('deactivate');
+    deactivateAiResource.addMethod('POST', contentIntegration);
 
     // Outputs
     new cdk.CfnOutput(this, 'NarraViewApiUrl', {
