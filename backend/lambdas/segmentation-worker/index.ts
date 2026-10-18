@@ -14,7 +14,7 @@ const lambdaClient = new LambdaClient({});
 const TABLE_NAME = process.env.TABLE_NAME || '';
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
 const BEDROCK_MANTLE_BASE_URL = process.env.BEDROCK_MANTLE_BASE_URL || 'https://bedrock-mantle.eu-north-1.api.aws/v1';
-const BEDROCK_MANTLE_MODEL = 'openai.gpt-oss-120b';
+const BEDROCK_MANTLE_MODEL = process.env.BEDROCK_MANTLE_MODEL || 'openai.gpt-oss-120b';
 
 export interface CanonicalTranscriptSegment {
   transcriptIndex: number;

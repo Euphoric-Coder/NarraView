@@ -8,11 +8,14 @@ import { spacing } from '../theme/spacing';
 
 interface ContentRowProps {
   category: ContentCategory;
-  onItemPress: (item: ContentItem) => void;
+  onItemPress?: (item: ContentItem) => void;
+  onSelectItem?: (item: ContentItem) => void;
   autoFocus?: boolean;
 }
 
-export const ContentRow = ({ category, onItemPress, autoFocus }: ContentRowProps) => {
+export const ContentRow = ({ category, onItemPress, onSelectItem, autoFocus }: ContentRowProps) => {
+  const handlePress = onItemPress || onSelectItem || (() => {});
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{category.title}</Text>
@@ -25,7 +28,7 @@ export const ContentRow = ({ category, onItemPress, autoFocus }: ContentRowProps
           <ContentCard 
             key={item.id} 
             item={item} 
-            onPress={onItemPress}
+            onPress={handlePress}
             hasTVPreferredFocus={autoFocus && index === 0}
           />
         ))}

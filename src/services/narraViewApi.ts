@@ -12,6 +12,7 @@ export interface AskNarraViewRequest {
     endTime: number;
     label: string;
   };
+  viewerId?: string;
 }
 
 export interface AskNarraViewResponse {
@@ -47,7 +48,7 @@ export const askNarraView = async (request: AskNarraViewRequest): Promise<AskNar
   console.log(`[NarraView API] endpoint: ${endpoint}`);
   console.log(`[NarraView API] request:\\ncontent=${request.contentId}\\ntime=${request.timestamp}\\nmode=${request.mode}\\nquestion=${request.question}\\nscene=${request.scene?.label}`);
 
-  let response: Response;
+  let response: any;
   try {
     response = await fetch(endpoint, {
       method: 'POST',

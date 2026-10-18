@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL, ADMIN_TOKEN } from "@/config";
+import { ADMIN_API_BASE_URL } from "@/config";
 
 interface CorrectionItem {
   transcriptIndex: number;
@@ -64,11 +64,11 @@ function TranscriptViewerInner() {
     try {
       // Fetch both in parallel
       const [rawRes, corrRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/content/${contentId}/transcript`, {
-          headers: { 'X-Admin-Token': ADMIN_TOKEN }
+        fetch(`${ADMIN_API_BASE_URL}/content/${contentId}/transcript`, {
+          
         }),
-        fetch(`${API_BASE_URL}/content/${contentId}/transcript/corrected`, {
-          headers: { 'X-Admin-Token': ADMIN_TOKEN }
+        fetch(`${ADMIN_API_BASE_URL}/content/${contentId}/transcript/corrected`, {
+          
         })
       ]);
 

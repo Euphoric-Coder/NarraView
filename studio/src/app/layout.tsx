@@ -29,6 +29,9 @@ export default function RootLayout({
                   <Link href="/" className="text-white/60 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
                     Content Library
                   </Link>
+                  <Link href="/viewers" className="text-white/60 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">
+                    Viewer Sessions
+                  </Link>
                 </div>
               </div>
               <div>

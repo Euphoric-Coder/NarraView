@@ -10,6 +10,13 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as path from 'path';
 
+// Centralized Backend Environment & Model Configuration (Part H)
+const AWS_REGION = 'eu-north-1';
+const BEDROCK_MANTLE_BASE_URL = 'https://bedrock-mantle.eu-north-1.api.aws/v1';
+const BEDROCK_MANTLE_MODEL = 'openai.gpt-oss-120b';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'narraview-admin-token';
+
+
 export class CdkStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -20,6 +27,22 @@ export class CdkStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+// Viewer Progress DynamoDB Table (v0.17)
+    const viewerProgressTable = new dynamodb.Table(this, 'NarraViewViewerProgress', {
+      partitionKey: { name: 'viewerId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'contentId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    viewerProgressTable.addGlobalSecondaryIndex({
+      indexName: 'ViewerProgressByLastWatched',
+      partitionKey: { name: 'viewerId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'lastWatchedAt', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
     });
 
     // S3 Bucket for Media
@@ -118,10 +141,14 @@ export class CdkStack extends cdk.Stack {
       environment: {
         TABLE_NAME: contentTable.tableName,
         BUCKET_NAME: mediaBucket.bucketName,
-        BEDROCK_MANTLE_BASE_URL: 'https://bedrock-mantle.eu-north-1.api.aws/v1',
+        BEDROCK_MANTLE_BASE_URL,
+        BEDROCK_MANTLE_MODEL,
+        ADMIN_TOKEN,
+        VIEWER_TABLE_NAME: viewerProgressTable.tableName,
       }
     });
 
+    viewerProgressTable.grantReadData(askSceneLambda);
     contentTable.grantReadData(askSceneLambda);
     mediaBucket.grantRead(askSceneLambda);
     askSceneLambda.addToRolePolicy(new iam.PolicyStatement({
@@ -147,7 +174,8 @@ export class CdkStack extends cdk.Stack {
       environment: {
         TABLE_NAME: contentTable.tableName,
         BUCKET_NAME: mediaBucket.bucketName,
-        BEDROCK_MANTLE_BASE_URL: 'https://bedrock-mantle.eu-north-1.api.aws/v1',
+        BEDROCK_MANTLE_BASE_URL,
+        BEDROCK_MANTLE_MODEL,
       }
     });
 
@@ -181,7 +209,8 @@ export class CdkStack extends cdk.Stack {
       environment: {
         TABLE_NAME: contentTable.tableName,
         BUCKET_NAME: mediaBucket.bucketName,
-        BEDROCK_MANTLE_BASE_URL: 'https://bedrock-mantle.eu-north-1.api.aws/v1',
+        BEDROCK_MANTLE_BASE_URL,
+        BEDROCK_MANTLE_MODEL,
       }
     });
 
@@ -210,7 +239,8 @@ export class CdkStack extends cdk.Stack {
       environment: {
         TABLE_NAME: contentTable.tableName,
         BUCKET_NAME: mediaBucket.bucketName,
-        BEDROCK_MANTLE_BASE_URL: 'https://bedrock-mantle.eu-north-1.api.aws/v1',
+        BEDROCK_MANTLE_BASE_URL,
+        BEDROCK_MANTLE_MODEL,
       }
     });
 
@@ -263,6 +293,23 @@ export class CdkStack extends cdk.Stack {
 
     intelligenceCompilerLambda.grantInvoke(knowledgeExtractionWorkerLambda);
     knowledgeExtractionWorkerLambda.addEnvironment('INTELLIGENCE_COMPILER_FUNCTION_NAME', intelligenceCompilerLambda.functionName);
+
+    // Viewer Progress & Sessions Lambda Function (v0.17)
+    const viewerLambda = new NodejsFunction(this, 'ViewerLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: path.join(__dirname, '../../../backend/lambdas/viewer/index.ts'),
+      handler: 'handler',
+      projectRoot: path.join(__dirname, '../../../'),
+      logRetention: cdk.aws_logs.RetentionDays.ONE_WEEK,
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        TABLE_NAME: viewerProgressTable.tableName,
+        CONTENT_TABLE_NAME: contentTable.tableName,
+      }
+    });
+
+    viewerProgressTable.grantReadWriteData(viewerLambda);
+    contentTable.grantReadData(viewerLambda);
 
     // API Gateway REST API
     const api = new apigateway.RestApi(this, 'NarraViewApi', {
@@ -353,6 +400,31 @@ export class CdkStack extends cdk.Stack {
     activateAiResource.addMethod('POST', contentIntegration);
     const deactivateAiResource = contentAiResource.addResource('deactivate');
     deactivateAiResource.addMethod('POST', contentIntegration);
+
+    // Route: /viewer (v0.17)
+    const viewerIntegration = new apigateway.LambdaIntegration(viewerLambda, {
+      allowTestInvoke: false,
+    });
+
+    const viewerResource = api.root.addResource('viewer');
+    const viewerIdResource = viewerResource.addResource('{viewerId}');
+
+    const viewerSessionsResource = viewerIdResource.addResource('sessions');
+    viewerSessionsResource.addMethod('POST', viewerIntegration);
+
+    const continueWatchingResource = viewerIdResource.addResource('continue-watching');
+    continueWatchingResource.addMethod('GET', viewerIntegration);
+
+    const viewerHistoryResource = viewerIdResource.addResource('history');
+    viewerHistoryResource.addMethod('GET', viewerIntegration);
+
+    const viewerProgressResource = viewerIdResource.addResource('progress');
+    const viewerProgressContentIdResource = viewerProgressResource.addResource('{contentId}');
+    viewerProgressContentIdResource.addMethod('GET', viewerIntegration);
+    viewerProgressContentIdResource.addMethod('PUT', viewerIntegration);
+
+    const resetViewerProgressResource = viewerProgressContentIdResource.addResource('reset');
+    resetViewerProgressResource.addMethod('POST', viewerIntegration);
 
     // Outputs
     new cdk.CfnOutput(this, 'NarraViewApiUrl', {

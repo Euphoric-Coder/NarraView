@@ -21,7 +21,7 @@ export const ContentCard = ({ item, onPress, hasTVPreferredFocus }: ContentCardP
       hasTVPreferredFocus={hasTVPreferredFocus}
       onFocus={() => setIsFocused(true)}
       onBlur={() => setIsFocused(false)}
-      onPress={() => onPress(item)}
+      onPress={() => { if (typeof onPress === "function") { onPress(item); } }}
       style={({ pressed }) => [
         styles.cardContainer,
         isFocused && styles.focusedCardContainer,

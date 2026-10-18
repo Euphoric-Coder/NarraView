@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { API_BASE_URL, ADMIN_TOKEN } from "@/config";
+import { ADMIN_API_BASE_URL } from "@/config";
 
 export default function Home() {
   const [content, setContent] = useState<any[]>([]);
@@ -15,11 +15,7 @@ export default function Home() {
 
   const fetchContent = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/content?all=true`, {
-        headers: {
-          'X-Admin-Token': ADMIN_TOKEN
-        }
-      });
+      const res = await fetch(`${ADMIN_API_BASE_URL}/content?all=true`);
       if (!res.ok) throw new Error("Failed to fetch content");
       const data = await res.json();
       setContent(data);

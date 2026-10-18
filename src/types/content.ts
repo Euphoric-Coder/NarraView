@@ -16,10 +16,15 @@ export interface ContentItem {
   runtime: string;
   year: number;
   progress?: number;
+  positionSeconds?: number;
+  durationSeconds?: number;
+  progressPercent?: number;
+  lastWatchedAt?: string;
+  isCompleted?: boolean;
+  watchedIntervals?: Array<{ start: number; end: number }>;
   posterColor: string;
   posterUrl?: string;
   videoSource?: string;
-  durationSeconds?: number;
   scenes?: ContentScene[];
   aiReady?: boolean;
   runtimeProvider?: RuntimeProvider;

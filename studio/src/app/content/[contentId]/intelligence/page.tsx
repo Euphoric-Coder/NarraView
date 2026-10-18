@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL, ADMIN_TOKEN } from "@/config";
+import { ADMIN_API_BASE_URL } from "@/config";
 
 interface IntelligenceData {
   schemaVersion: string;
@@ -138,11 +138,11 @@ function IntelligenceViewerInner() {
     const mode = overrideMode || ragMode;
     const q = overrideQ !== undefined ? overrideQ : ragQuestion;
     try {
-      const res = await fetch(`${API_BASE_URL}/ai/ask`, {
+      const res = await fetch(`${ADMIN_API_BASE_URL}/ai/ask`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Admin-Token": ADMIN_TOKEN,
+          
         },
         body: JSON.stringify({
           contentId,
@@ -176,8 +176,8 @@ function IntelligenceViewerInner() {
 
   const fetchVersions = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/content/${contentId}/intelligence/versions`, {
-        headers: { 'X-Admin-Token': ADMIN_TOKEN },
+      const res = await fetch(`${ADMIN_API_BASE_URL}/content/${contentId}/intelligence/versions`, {
+        
         cache: 'no-store'
       });
       if (res.ok) {
@@ -196,11 +196,11 @@ function IntelligenceViewerInner() {
     setError("");
     try {
       const endpoint = (version && version !== "latest")
-        ? `${API_BASE_URL}/content/${contentId}/intelligence/${version}`
-        : `${API_BASE_URL}/content/${contentId}/intelligence`;
+        ? `${ADMIN_API_BASE_URL}/content/${contentId}/intelligence/${version}`
+        : `${ADMIN_API_BASE_URL}/content/${contentId}/intelligence`;
 
       const res = await fetch(endpoint, {
-        headers: { 'X-Admin-Token': ADMIN_TOKEN },
+        
         cache: 'no-store'
       });
       if (!res.ok) {
@@ -223,9 +223,9 @@ function IntelligenceViewerInner() {
     if (!confirm("Recompile canonical content intelligence package? This creates a new immutable version.")) return;
     setRecompiling(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/content/${contentId}/intelligence/compile`, {
+      const res = await fetch(`${ADMIN_API_BASE_URL}/content/${contentId}/intelligence/compile`, {
         method: "POST",
-        headers: { "X-Admin-Token": ADMIN_TOKEN },
+        
       });
       if (!res.ok) {
         const errorData = await res.json();

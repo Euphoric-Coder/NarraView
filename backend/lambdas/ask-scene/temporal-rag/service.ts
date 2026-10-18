@@ -240,7 +240,7 @@ export class TemporalRagService {
 
     // 7. Evidence Retrieval strictly from Safe Snapshot (Requirements 9, 10, 11, 12, 13)
     const query = request.question || request.topic || '';
-    const { documents: retrievedDocs, citations } = retrieveSafeEvidence(snapshot, query, mode, 8);
+    const { documents: retrievedDocs, citations } = retrieveSafeEvidence(snapshot, query, mode, 8, request.watchedIntervals);
 
     console.log(JSON.stringify({
       event: "TEMPORAL_RETRIEVAL_COMPLETE",
@@ -255,7 +255,7 @@ export class TemporalRagService {
     let rawModelOutput = "";
 
     try {
-      rawModelOutput = await this.invokeModel(snapshot, retrievedDocs, mode, request.question);
+      rawModelOutput = await this.invokeModel(snapshot, retrievedDocs, mode, request.question, request.watchedIntervals);
     } catch (modelErr: any) {
       console.error(JSON.stringify({
         event: "BEDROCK_RUNTIME_ERROR",
@@ -366,11 +366,12 @@ export class TemporalRagService {
     snapshot: TemporalSnapshot,
     retrievedDocs: any[],
     mode: TemporalMode,
-    userQuestion?: string
+    userQuestion?: string,
+    watchedIntervals?: Array<{ start: number; end: number }>
   ): Promise<string> {
     const evidenceText = retrievedDocs.map((d, i) => `[E${i + 1}] (${d.type.toUpperCase()}) ${d.text}`).join('\n');
     const systemPrompt = this.buildSystemPrompt(snapshot.viewerTimestamp, mode);
-    const userPrompt = this.buildUserPrompt(snapshot, evidenceText, mode, userQuestion);
+    const userPrompt = this.buildUserPrompt(snapshot, evidenceText, mode, userQuestion, watchedIntervals);
 
     console.log(JSON.stringify({
       event: "BEDROCK_RUNTIME_REQUEST",
@@ -464,10 +465,15 @@ Do not use advanced concepts or terminology introduced later in the content.`;
 Answer the user's question directly and concisely using only the revealed facts.`;
   }
 
-  private buildUserPrompt(snapshot: TemporalSnapshot, evidenceText: string, mode: TemporalMode, userQuestion?: string): string {
+  private buildUserPrompt(snapshot: TemporalSnapshot, evidenceText: string, mode: TemporalMode, userQuestion?: string, watchedIntervals?: Array<{ start: number; end: number }>): string {
+    let coverageNote = '';
+    if (watchedIntervals && watchedIntervals.length > 0 && (mode === 'previously_on' || mode === 'recap')) {
+      coverageNote = `\nVIEWER WATCHED COVERAGE: The viewer has watched intervals: ${watchedIntervals.map(i => `[${i.start}s - ${i.end}s]`).join(', ')}. If any content occurred during skipped periods, do not state that the viewer watched it. Focus on what was revealed during their watched coverage.\n`;
+    }
+
     let msg = `Content Title: ${snapshot.title}
 Viewer Current Playback Timestamp: ${snapshot.viewerTimestamp.toFixed(2)}s
-
+${coverageNote}
 REVEALED EVIDENCE (KNOWN SO FAR):
 ${evidenceText || "No evidence has been revealed yet."}
 `;

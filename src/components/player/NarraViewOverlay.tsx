@@ -13,6 +13,7 @@ interface NarraViewOverlayProps {
   contextTimestamp?: number;
   currentScene?: any;
   runtimeProvider?: "handcrafted" | "intelligence";
+  viewerId?: string;
 }
 
 type OverlayState = 'idle' | 'custom-input' | 'loading' | 'success' | 'error';
@@ -74,7 +75,7 @@ const CompactOptionCard = ({ label, onPress, hasTVPreferredFocus }: any) => {
   );
 };
 
-export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, currentScene, runtimeProvider }: NarraViewOverlayProps) => {
+export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, currentScene, runtimeProvider, viewerId }: NarraViewOverlayProps) => {
   const [fadeAnim] = useState(new Animated.Value(0));
   const [overlayState, setOverlayState] = useState<OverlayState>('idle');
   const [customQuestion, setCustomQuestion] = useState('');
@@ -187,7 +188,8 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
         mode: action.mode,
         question: query,
         requestId: reqIdStr,
-        scene: currentScene
+        scene: currentScene,
+        viewerId
       });
       
       // Stale request guard: discard response if request became stale

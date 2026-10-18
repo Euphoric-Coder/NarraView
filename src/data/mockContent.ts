@@ -2,55 +2,6 @@ import { ContentCategory } from '../types/content';
 
 export const mockCategories: ContentCategory[] = [
   {
-    id: 'continue-watching',
-    title: 'Continue Watching',
-    items: [
-      {
-        id: 'signal-lost',
-        contentId: 'signal-lost',
-        videoSource:
-          'https://narraview-media-sagnik.s3.eu-north-1.amazonaws.com/videos/signal_lost_demo.mp4',
-        durationSeconds: 24,
-        title: 'Signal Lost',
-        description:
-          'A research team investigates unexplained communications failures at an orbital station.',
-        genre: 'Sci-Fi',
-        contentType: 'film',
-        runtime: '00:24',
-        year: 2026,
-        progress: 0.42,
-        aiReady: true,
-        runtimeProvider: 'handcrafted',
-        mediaPlayable: true,
-        scenes: [
-          {
-            startTime: 0,
-            endTime: 6,
-            label: 'SIGNAL LOST - Orbital Research Station Eos',
-          },
-          {startTime: 6, endTime: 12, label: 'SCENE 01 — The Warning'},
-          {startTime: 12, endTime: 18, label: 'SCENE 02 — Telemetry Failure'},
-          {startTime: 18, endTime: 24, label: 'SCENE 03 — Station Seven'},
-        ],
-        posterColor: '#1A2A3A',
-      },
-      {
-        id: 'beyond-horizon',
-        contentId: 'beyond-horizon',
-        title: 'Beyond the Horizon',
-        description:
-          'An exploration vessel reaches the edge of the mapped galaxy, only to find something staring back.',
-        genre: 'Adventure',
-        runtime: '12m',
-        year: 2025,
-        progress: 0.75,
-        posterColor: '#2A1A3A',
-        aiReady: false,
-        mediaPlayable: false,
-      },
-    ],
-  },
-  {
     id: 'explore',
     title: 'Explore with NarraView',
     items: [

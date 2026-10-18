@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL, ADMIN_TOKEN } from "@/config";
+import { ADMIN_API_BASE_URL } from "@/config";
 
 export default function AddContent() {
   const router = useRouter();
@@ -36,11 +36,10 @@ export default function AddContent() {
 
   const uploadFileToS3 = async (file: File, endpoint: string) => {
     // 1. Request presigned URL
-    const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const res = await fetch(`${ADMIN_API_BASE_URL}${endpoint}`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        "X-Admin-Token": ADMIN_TOKEN
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
         contentId: formData.contentId,
@@ -95,11 +94,10 @@ export default function AddContent() {
       }
 
       setProgress("Registering metadata...");
-      const res = await fetch(`${API_BASE_URL}/content`, {
+      const res = await fetch(`${ADMIN_API_BASE_URL}/content`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "X-Admin-Token": ADMIN_TOKEN
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
           ...formData,

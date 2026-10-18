@@ -121,6 +121,8 @@ export interface TemporalRagRequest {
   question?: string;
   requestId?: string;
   topic?: string;
+  viewerId?: string;
+  watchedIntervals?: Array<{ start: number; end: number }>;
 }
 
 export interface TemporalRagResponse {

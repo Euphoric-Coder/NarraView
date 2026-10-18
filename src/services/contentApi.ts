@@ -1,32 +1,57 @@
 import { API_BASE_URL } from '../config/api';
 
-export const listContent = async () => {
-  try {
-    const timestamp = Date.now();
-    const res = await fetch(`${API_BASE_URL}/content?_t=${timestamp}`, {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache'
+export const listContentWithRetry = async (
+  maxRetries = 3,
+  retryDelays = [500, 1500, 3000]
+): Promise<any[] | null> => {
+  let attempt = 0;
+  while (attempt <= maxRetries) {
+    attempt++;
+    console.log('[CLOUD_FETCH_START]', { attempt });
+    try {
+      const timestamp = Date.now();
+      const res = await fetch(`${API_BASE_URL}/content?_t=${timestamp}`, {
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const itemCount = Array.isArray(data) ? data.length : 0;
+        console.log('[CLOUD_FETCH_SUCCESS]', {
+          attempt,
+          httpStatus: res.status,
+          itemCount
+        });
+        return Array.isArray(data) ? data : [];
+      } else {
+        console.warn('[CLOUD_FETCH_FAILED]', {
+          attempt,
+          httpStatus: res.status,
+          error: `HTTP ${res.status}`
+        });
       }
-    });
-    if (!res.ok) throw new Error('Failed to fetch content library');
-    const data = await res.json();
-    if (Array.isArray(data)) {
-      console.log('[CLOUD_CATALOG_RAW]', data.map((d: any) => ({
-        contentId: d.contentId,
-        title: d.title,
-        aiReady: d.aiReady,
-        runtimeProvider: d.runtimeProvider,
-        mediaPlayable: d.mediaPlayable,
-        contentType: d.contentType,
-        durationSeconds: d.durationSeconds
-      })));
+    } catch (err: any) {
+      console.warn('[CLOUD_FETCH_FAILED]', {
+        attempt,
+        error: err?.message || String(err)
+      });
     }
-    return data;
-  } catch (error) {
-    console.warn('listContent failed, falling back to local demo data', error);
-    return null;
+
+    if (attempt <= maxRetries) {
+      const delay = retryDelays[attempt - 1] || 3000;
+      console.log(`[CLOUD_FETCH_RETRY] Retrying in ${delay}ms (attempt ${attempt}/${maxRetries})...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
+
+  console.error('[CLOUD_FETCH_FAILED] All catalog retries exhausted');
+  return null;
+};
+
+export const listContent = async () => {
+  return listContentWithRetry(0);
 };
 
 export const getContent = async (contentId: string) => {

@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL, ADMIN_TOKEN } from "@/config";
+import { ADMIN_API_BASE_URL } from "@/config";
 
 function ContentDetailInner() {
   const params = useParams();
@@ -48,11 +48,7 @@ function ContentDetailInner() {
   const fetchDetail = async (isSilent = false) => {
     if (!isSilent) setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/content/${contentId}`, {
-        headers: {
-          'X-Admin-Token': ADMIN_TOKEN
-        }
-      });
+      const res = await fetch(`${ADMIN_API_BASE_URL}/content/${contentId}`);
       if (!res.ok) throw new Error("Failed to fetch content details");
       const data = await res.json();
       setContent(data);
@@ -93,11 +89,10 @@ function ContentDetailInner() {
   const handleReprocessPipeline = async (startFrom: 'transcript_correction' | 'transcription' | 'scene_detection' | 'knowledge_extraction' | 'intelligence_compilation') => {
     setReprocessLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/content/${canonicalContentId}/pipeline/reprocess`, {
+      const res = await fetch(`${ADMIN_API_BASE_URL}/content/${canonicalContentId}/pipeline/reprocess`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Token': ADMIN_TOKEN
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ startFrom })
       });
@@ -137,10 +132,7 @@ function ContentDetailInner() {
 
     try {
       const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'X-Admin-Token': ADMIN_TOKEN
-        }
+        method: 'POST'
       });
       const data = await res.json();
       if (!res.ok) {
@@ -166,46 +158,45 @@ function ContentDetailInner() {
     const msg = isRerun 
       ? "Re-running Amazon Transcribe will invalidate ALL downstream stages (Transcript Correction, Scene Detection, Knowledge Extraction, Content Intelligence) as STALE. Continue?"
       : "Are you sure you want to start transcription for this media?";
-    triggerStage('transcription', `${API_BASE_URL}/content/${canonicalContentId}/transcribe`, msg);
+    triggerStage('transcription', `${ADMIN_API_BASE_URL}/content/${canonicalContentId}/transcribe`, msg);
   };
 
   const handleCorrection = (isRerun = false) => {
     const msg = isRerun
       ? "Re-running Transcript Correction will invalidate downstream stages (Scene Detection, Knowledge Extraction, Content Intelligence) as STALE. Continue?"
       : "Start AI Transcript Correction & Normalization?";
-    triggerStage('correction', `${API_BASE_URL}/content/${canonicalContentId}/transcript/correct`, msg);
+    triggerStage('correction', `${ADMIN_API_BASE_URL}/content/${canonicalContentId}/transcript/correct`, msg);
   };
 
   const handleSegmentation = (isRerun = false) => {
     const msg = isRerun
       ? "Re-running Scene Boundary Detection will invalidate downstream stages (Knowledge Extraction, Content Intelligence) as STALE. Continue?"
       : "Start Scene/Segment detection for this media?";
-    triggerStage('segmentation', `${API_BASE_URL}/content/${canonicalContentId}/segments/detect`, msg);
+    triggerStage('segmentation', `${ADMIN_API_BASE_URL}/content/${canonicalContentId}/segments/detect`, msg);
   };
 
   const handleKnowledge = (isRerun = false) => {
     const msg = isRerun
       ? "Re-running Knowledge Graph Extraction will invalidate Content Intelligence as STALE. Continue?"
       : "Start Knowledge Graph Extraction for this media?";
-    triggerStage('knowledge', `${API_BASE_URL}/content/${canonicalContentId}/knowledge/extract`, msg);
+    triggerStage('knowledge', `${ADMIN_API_BASE_URL}/content/${canonicalContentId}/knowledge/extract`, msg);
   };
 
   const handleIntelligence = (isRecompile = false) => {
     const msg = isRecompile
       ? "Compile a new immutable Content Intelligence version (vN)? Previous versions will remain preserved in history."
       : "Compile Canonical Content Intelligence Package?";
-    triggerStage('intelligence', `${API_BASE_URL}/content/${canonicalContentId}/intelligence/compile`, msg);
+    triggerStage('intelligence', `${ADMIN_API_BASE_URL}/content/${canonicalContentId}/intelligence/compile`, msg);
   };
 
   const handleActivateAi = async () => {
     if (!confirm("Activate NarraView AI for this title? This enables generic Temporal RAG for viewers.")) return;
     setExecutingStage('activate');
     try {
-      const res = await fetch(`${API_BASE_URL}/content/${canonicalContentId}/ai/activate`, {
+      const res = await fetch(`${ADMIN_API_BASE_URL}/content/${canonicalContentId}/ai/activate`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "X-Admin-Token": ADMIN_TOKEN,
+          "Content-Type": "application/json"
         },
       });
       const data = await res.json();
@@ -227,11 +218,10 @@ function ContentDetailInner() {
     if (!confirm("Deactivate NarraView AI for this title? Runtime queries will fail closed.")) return;
     setExecutingStage('deactivate');
     try {
-      const res = await fetch(`${API_BASE_URL}/content/${canonicalContentId}/ai/deactivate`, {
+      const res = await fetch(`${ADMIN_API_BASE_URL}/content/${canonicalContentId}/ai/deactivate`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "X-Admin-Token": ADMIN_TOKEN,
+          "Content-Type": "application/json"
         },
       });
       if (res.ok) {

@@ -1,106 +1,262 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { ScrollView, StyleSheet, View, Text, ActivityIndicator, AppState, AppStateStatus } from 'react-native';
 import { ContentItem, ContentCategory, RuntimeProvider } from '../types/content';
 import { ContentRow } from '../components/ContentRow';
 import { HeroBanner } from '../components/HeroBanner';
 import { mockCategories } from '../data/mockContent';
 import { colors } from '../theme/colors';
 import { TVFocusGuideView } from '@amazon-devices/react-native-kepler';
-import { listContent } from '../services/contentApi';
+import { listContentWithRetry } from '../services/contentApi';
 import { formatRuntime } from '../utils/formatRuntime';
+import { getViewerId } from '../services/viewerIdentity';
+import { logRealVegaConfig } from '../config/env';
+import { getContinueWatching, getContinueWatchingWithRetry } from '../services/viewerProgressApi';
 
 interface HomeScreenProps {
   onSelectItem: (item: ContentItem) => void;
+  refreshTrigger?: number;
 }
 
-export const HomeScreen = ({ onSelectItem }: HomeScreenProps) => {
+function mapContinueWatchingToContentItem(cw: any): ContentItem {
+  const canonicalId = cw.contentId || cw.id;
+  const durationSec = typeof cw.durationSeconds === 'number' ? cw.durationSeconds : undefined;
+  const progressPct = typeof cw.progressPercent === 'number' ? cw.progressPercent : 0;
+
+  return {
+    id: canonicalId,
+    contentId: canonicalId,
+    title: cw.title,
+    description: cw.description || '',
+    genre: cw.genre || 'Feature',
+    contentType: cw.contentType,
+    runtime: cw.runtime || formatRuntime(durationSec),
+    durationSeconds: durationSec,
+    positionSeconds: cw.positionSeconds,
+    progressPercent: progressPct,
+    progress: progressPct > 0 ? progressPct / 100 : undefined,
+    lastWatchedAt: cw.lastWatchedAt,
+    year: new Date().getFullYear(),
+    posterColor: '#1A2A3A',
+    posterUrl: cw.posterUrl,
+    videoSource: cw.videoSource,
+    aiReady: cw.aiReady === true,
+    runtimeProvider: cw.runtimeProvider,
+    mediaPlayable: cw.mediaPlayable !== false,
+    catalogVisible: cw.catalogVisible !== false,
+  };
+}
+
+function mapCloudItemToContentItem(item: any): ContentItem {
+  const canonicalContentId = item.contentId || item.id;
+  const runtimeProvider: RuntimeProvider | undefined = canonicalContentId === 'signal-lost'
+    ? 'handcrafted'
+    : (item.runtimeProvider || (item.aiReady ? 'intelligence' : undefined));
+  
+  const durationSec = typeof item.durationSeconds === 'number' ? item.durationSeconds : undefined;
+  const genre = item.contentType
+    ? item.contentType.charAt(0).toUpperCase() + item.contentType.slice(1)
+    : 'Tutorial';
+  const runtime = formatRuntime(durationSec);
+
+  return {
+    id: canonicalContentId,
+    contentId: canonicalContentId,
+    title: item.title,
+    description: item.description || '',
+    genre,
+    contentType: item.contentType,
+    runtime,
+    durationSeconds: durationSec,
+    year: item.createdAt ? new Date(item.createdAt).getFullYear() : new Date().getFullYear(),
+    posterColor: '#1a1a24',
+    posterUrl: item.posterUrl,
+    videoSource: item.videoUrl,
+    aiReady: item.aiReady === true,
+    runtimeProvider,
+    mediaPlayable: item.mediaPlayable !== false,
+    catalogVisible: item.catalogVisible !== false,
+  };
+}
+
+export const HomeScreen = ({ onSelectItem, refreshTrigger }: HomeScreenProps) => {
   const [categories, setCategories] = useState<ContentCategory[]>(mockCategories);
+  const [isColdBooting, setIsColdBooting] = useState<boolean>(true);
+  
+  const continueWatchingItemsRef = useRef<ContentItem[]>([]);
+  const cloudItemsRef = useRef<ContentItem[]>([]);
+  const isRefreshingRef = useRef<boolean>(false);
+  const appStateRef = useRef<AppStateStatus>(typeof AppState?.currentState === 'string' ? AppState.currentState : 'active');
 
-  const loadContent = useCallback(async () => {
-    const apiContent = await listContent();
-    if (apiContent && Array.isArray(apiContent) && apiContent.length > 0) {
-      // Map API items to ContentItem format preserving canonical state
-      const publicItems = apiContent.filter((item: any) => item.catalogVisible !== false);
-      const dynamicItems: ContentItem[] = publicItems.map((item: any) => {
-        const canonicalContentId = item.contentId || item.id;
-        const runtimeProvider: RuntimeProvider | undefined = canonicalContentId === 'signal-lost'
-          ? 'handcrafted'
-          : (item.runtimeProvider || (item.aiReady ? 'intelligence' : undefined));
-        
-        const durationSec = typeof item.durationSeconds === 'number' ? item.durationSeconds : undefined;
-        const genre = item.contentType
-          ? item.contentType.charAt(0).toUpperCase() + item.contentType.slice(1)
-          : 'Tutorial';
-        const runtime = formatRuntime(durationSec);
+  const loadContent = useCallback(async (isInitialBoot = false) => {
+    if (isRefreshingRef.current) {
+      console.log('[HOME_LOAD] Refresh already in-flight, skipping duplicate call');
+      return;
+    }
+    isRefreshingRef.current = true;
 
-        return {
-          id: canonicalContentId,
-          contentId: canonicalContentId,
-          title: item.title,
-          description: item.description || '',
-          genre,
-          contentType: item.contentType,
-          runtime,
-          durationSeconds: durationSec,
-          year: item.createdAt ? new Date(item.createdAt).getFullYear() : new Date().getFullYear(),
-          posterColor: '#1a1a24',
-          posterUrl: item.posterUrl,
-          videoSource: item.videoUrl,
-          aiReady: item.aiReady === true,
-          runtimeProvider,
-          mediaPlayable: item.mediaPlayable !== false,
-          catalogVisible: item.catalogVisible !== false,
-        };
+    try {
+      if (isInitialBoot) {
+        console.log('[HOME_BOOT_START]');
+        logRealVegaConfig();
+        console.log('[APP_BOOT] Starting deterministic cold boot flow');
+      }
+
+      // Step 1: Guarantee stable viewer identity is ready before querying viewer data (Req 2)
+      const viewerId = await getViewerId();
+      console.log('[HOME_VIEWER_READY]', { viewerId });
+      console.log('[VIEWER_ID_READY]', { viewerId });
+
+      // Step 2: Parallel fetch using Promise.allSettled (Req 5, 14)
+      console.log('[CONTINUE_FETCH_START]', { viewerId, attempt: 1 });
+      const [cloudSettled, continueSettled] = await Promise.allSettled([
+        listContentWithRetry(3, [500, 1500, 3000]),
+        getContinueWatching(viewerId)
+      ]);
+
+      // Process Cloud Catalog (Req 6)
+      if (cloudSettled.status === 'fulfilled' && Array.isArray(cloudSettled.value) && cloudSettled.value.length > 0) {
+        const publicItems = cloudSettled.value.filter((item: any) => item.catalogVisible !== false);
+        cloudItemsRef.current = publicItems.map(mapCloudItemToContentItem);
+      } else if (cloudSettled.status === 'rejected') {
+        console.warn('[CLOUD_FETCH_FAILED]', { error: cloudSettled.reason });
+      }
+
+      // Process Continue Watching (Req 11, 12: do not erase local state on fetch failure)
+      if (continueSettled.status === 'fulfilled') {
+        const cwData = continueSettled.value;
+        console.log('[CONTINUE_FETCH_SUCCESS]', {
+          viewerId,
+          attempt: 1,
+          httpStatus: 200,
+          itemCount: cwData.length
+        });
+        continueWatchingItemsRef.current = cwData.map(mapContinueWatchingToContentItem);
+        console.log('[HOME_CONTINUE_STATE_COMMITTED]', { count: continueWatchingItemsRef.current.length });
+      } else {
+        console.warn('[HOME_CONTINUE_ERROR]', {
+          message: continueSettled.reason?.message || String(continueSettled.reason),
+          status: 0
+        });
+        console.warn('[CONTINUE_FETCH_FAILED]', {
+          viewerId,
+          attempt: 1,
+          error: continueSettled.reason
+        });
+        // Preserves previous continueWatchingItemsRef.current
+      }
+
+      // Step 3: Assemble categories
+      const finalCategories: ContentCategory[] = [];
+
+      if (continueWatchingItemsRef.current.length > 0) {
+        finalCategories.push({
+          id: 'continue-watching',
+          title: 'Continue Watching',
+          items: continueWatchingItemsRef.current
+        });
+      }
+
+      if (cloudItemsRef.current.length > 0) {
+        finalCategories.push({
+          id: 'cloud-content',
+          title: 'NarraView Cloud',
+          items: cloudItemsRef.current
+        });
+      }
+
+      finalCategories.push(...mockCategories);
+      setCategories(finalCategories);
+
+      console.log('[HOME_STATE_READY]', {
+        viewerId,
+        continueWatchingCount: continueWatchingItemsRef.current.length,
+        cloudCount: cloudItemsRef.current.length
       });
-
-      console.log('[CLOUD_CONTENT_MAPPED]', dynamicItems.map(d => ({
-        contentId: d.contentId,
-        title: d.title,
-        aiReady: d.aiReady,
-        runtimeProvider: d.runtimeProvider,
-        mediaPlayable: d.mediaPlayable,
-        contentType: d.contentType,
-        runtime: d.runtime
-      })));
-
-      const dynamicCategory: ContentCategory = {
-        id: 'cloud-content',
-        title: 'NarraView Cloud',
-        items: dynamicItems
-      };
-
-      setCategories([dynamicCategory, ...mockCategories]);
+    } catch (e) {
+      console.error('[HOME_SCREEN_LOAD_ERROR]', e);
+    } finally {
+      setIsColdBooting(false);
+      isRefreshingRef.current = false;
     }
   }, []);
 
+  // Initial boot load (Req 9)
   useEffect(() => {
-    loadContent();
+    loadContent(true);
   }, [loadContent]);
 
+  // AppState refresh: background/inactive -> active (Req 7)
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      console.log('[APP_STATE]', {
+        previous: appStateRef.current,
+        next: nextAppState
+      });
+      const prev = typeof appStateRef.current === 'string' ? appStateRef.current : 'active';
+      if ((prev === 'inactive' || prev === 'background') && nextAppState === 'active') {
+        console.log('[APP_STATE] Transition to active: refreshing data');
+        loadContent(false);
+      }
+      appStateRef.current = nextAppState;
+    };
+
+    let sub: any = null;
+    if (AppState && typeof AppState.addEventListener === 'function') {
+      sub = AppState.addEventListener('change', handleAppStateChange);
+    }
+    return () => {
+      if (sub && typeof sub.remove === 'function') {
+        sub.remove();
+      }
+    };
+  }, [loadContent]);
+
+  // Screen focus / return-to-home refresh (Req 8, 23)
+  useEffect(() => {
+    if (refreshTrigger) {
+      console.log('[HOME_FOCUS_REFRESH] Triggering return-to-home refresh at:', refreshTrigger);
+      loadContent(false);
+    }
+  }, [refreshTrigger, loadContent]);
+
   const handleSelectItem = (item: ContentItem) => {
-    console.log('[CONTENT_SELECTED]', {
-      contentId: item.contentId || item.id,
+    console.log('[HOME_SELECT_ITEM]', {
+      contentId: item.contentId,
       title: item.title,
       aiReady: item.aiReady,
-      runtimeProvider: item.runtimeProvider
+      runtimeProvider: item.runtimeProvider,
+      mediaPlayable: item.mediaPlayable,
+      positionSeconds: item.positionSeconds
     });
     onSelectItem(item);
   };
 
   return (
     <View style={styles.screen}>
-      <ScrollView 
-        contentContainerStyle={styles.scrollContent}
+      <ScrollView
+        style={styles.scrollView}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={false}
       >
-        <HeroBanner onExplore={() => handleSelectItem(categories[0].items[0])} />
+        <HeroBanner onExplore={() => {}} />
 
-        <TVFocusGuideView style={styles.rowsContainer}>
+        {isColdBooting && cloudItemsRef.current.length === 0 && (
+          <View style={styles.loadingCloudRow}>
+            <Text style={styles.loadingCloudTitle}>NarraView Cloud</Text>
+            <View style={styles.loadingCloudContent}>
+              <ActivityIndicator size="small" color="#F5B800" />
+              <Text style={styles.loadingCloudText}>Loading NarraView...</Text>
+            </View>
+          </View>
+        )}
+
+        <TVFocusGuideView style={styles.rowsContainer} autoFocus>
           {categories.map((category) => (
             <ContentRow
               key={category.id}
               category={category}
               onItemPress={handleSelectItem}
+              onSelectItem={handleSelectItem}
             />
           ))}
         </TVFocusGuideView>
@@ -114,11 +270,36 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  scrollContent: {
-    paddingBottom: 48,
+  scrollView: {
+    flex: 1,
   },
   rowsContainer: {
-    marginTop: -20,
-    zIndex: 3,
+    paddingBottom: 40,
+  },
+  loadingCloudRow: {
+    paddingHorizontal: 48,
+    marginVertical: 16,
+  },
+  loadingCloudTitle: {
+    color: '#ffffff',
+    fontSize: 22,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  loadingCloudContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 184, 0, 0.2)',
+  },
+  loadingCloudText: {
+    color: '#F5B800',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 12,
   },
 });

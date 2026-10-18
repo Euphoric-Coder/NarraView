@@ -12,11 +12,13 @@
     "test:snapshot": "jest --colors --updateSnapshot",
     "lint": "eslint src test package.json --ext .ts,.tsx",
     "lint:fix": "eslint src test package.json --ext .ts,.tsx --fix",
-    "build:release": "react-native build-vega --build-type Release",
-    "build:debug": "react-native build-vega --build-type Debug",
+    "build:release": "node scripts/generate-config.js production && react-native build-vega --build-type Release",
+    "build:debug": "node scripts/generate-config.js development && react-native build-vega --build-type Debug",
     "build:app": "npm-run-all build:release",
     "build": "npm-run-all build:release",
-    "release": "npm-run-all lint test build:app"
+    "release": "npm-run-all lint test build:app",
+    "generate-config:dev": "node scripts/generate-config.js development",
+    "generate-config:prod": "node scripts/generate-config.js production"
   },
   "dependencies": {
     "@amazon-devices/react-native-kepler": "~4.0.0",

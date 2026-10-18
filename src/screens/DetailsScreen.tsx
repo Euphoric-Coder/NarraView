@@ -8,75 +8,74 @@ import { typography } from '../theme/typography';
 import { spacing } from '../theme/spacing';
 import { getContent } from '../services/contentApi';
 import { formatRuntime } from '../utils/formatRuntime';
+import { getViewerId } from '../services/viewerIdentity';
+import { getProgress, resetProgress, ViewerProgressRecord } from '../services/viewerProgressApi';
 
 interface DetailsScreenProps {
-  onWatch: (freshItem?: ContentItem) => void;
+  onWatch: (freshItem?: ContentItem, initialPositionSeconds?: number) => void;
   onBack: () => void;
   item: ContentItem;
 }
 
 export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => {
   const [contentItem, setContentItem] = useState<ContentItem>(item);
+  const [viewerProgress, setViewerProgress] = useState<ViewerProgressRecord | null>(null);
+  const [viewerId, setViewerId] = useState<string>('');
 
   useEffect(() => {
     let isMounted = true;
     const cid = item.contentId || item.id;
 
-    console.log('[DETAILS_CONTENT_STATE]', {
-      contentId: cid,
-      title: item.title,
-      aiReady: item.aiReady,
-      runtimeProvider: item.runtimeProvider,
-      mediaPlayable: item.mediaPlayable,
-      duration: item.durationSeconds
-    });
+    const loadData = async () => {
+      const vid = await getViewerId();
+      if (isMounted) setViewerId(vid);
 
-    const refreshContent = async () => {
-      if (!cid) return;
-      const latest = await getContent(cid);
-      if (latest && isMounted) {
-        const canonicalContentId = latest.contentId || cid;
-        const runtimeProvider: RuntimeProvider | undefined = canonicalContentId === 'signal-lost'
-          ? 'handcrafted'
-          : (latest.runtimeProvider || (latest.aiReady ? 'intelligence' : undefined));
-        
-        const durationSec = typeof latest.durationSeconds === 'number' ? latest.durationSeconds : item.durationSeconds;
-        const genre = latest.contentType
-          ? latest.contentType.charAt(0).toUpperCase() + latest.contentType.slice(1)
-          : item.genre;
-        const runtime = formatRuntime(durationSec) || item.runtime;
+      // Load watch progress for this title
+      if (cid && vid) {
+        const prog = await getProgress(vid, cid);
+        if (isMounted && prog && !prog.notStarted) {
+          setViewerProgress(prog);
+        }
+      }
 
-        const updated: ContentItem = {
-          ...item,
-          id: canonicalContentId,
-          contentId: canonicalContentId,
-          title: latest.title || item.title,
-          description: latest.description || item.description,
-          genre,
-          contentType: latest.contentType || item.contentType,
-          runtime,
-          durationSeconds: durationSec,
-          videoSource: latest.videoUrl || item.videoSource,
-          posterUrl: latest.posterUrl || item.posterUrl,
-          aiReady: latest.aiReady === true,
-          runtimeProvider,
-          mediaPlayable: latest.mediaPlayable !== false,
-        };
+      // Refresh content metadata
+      if (cid) {
+        const latest = await getContent(cid);
+        if (latest && isMounted) {
+          const canonicalContentId = latest.contentId || cid;
+          const runtimeProvider: RuntimeProvider | undefined = canonicalContentId === 'signal-lost'
+            ? 'handcrafted'
+            : (latest.runtimeProvider || (latest.aiReady ? 'intelligence' : undefined));
+          
+          const durationSec = typeof latest.durationSeconds === 'number' ? latest.durationSeconds : item.durationSeconds;
+          const genre = latest.contentType
+            ? latest.contentType.charAt(0).toUpperCase() + latest.contentType.slice(1)
+            : item.genre;
+          const runtime = formatRuntime(durationSec) || item.runtime;
 
-        setContentItem(updated);
+          const updated: ContentItem = {
+            ...item,
+            id: canonicalContentId,
+            contentId: canonicalContentId,
+            title: latest.title || item.title,
+            description: latest.description || item.description,
+            genre,
+            contentType: latest.contentType || item.contentType,
+            runtime,
+            durationSeconds: durationSec,
+            videoSource: latest.videoUrl || item.videoSource,
+            posterUrl: latest.posterUrl || item.posterUrl,
+            aiReady: latest.aiReady === true,
+            runtimeProvider,
+            mediaPlayable: latest.mediaPlayable !== false,
+          };
 
-        console.log('[DETAILS_CONTENT_STATE] (refreshed)', {
-          contentId: updated.contentId,
-          title: updated.title,
-          aiReady: updated.aiReady,
-          runtimeProvider: updated.runtimeProvider,
-          mediaPlayable: updated.mediaPlayable,
-          duration: updated.durationSeconds
-        });
+          setContentItem(updated);
+        }
       }
     };
 
-    refreshContent();
+    loadData();
     return () => { isMounted = false; };
   }, [item]);
 
@@ -92,14 +91,47 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
     return () => backHandler?.remove?.();
   }, [onBack]);
 
-  const handleWatchPress = () => {
-    onWatch(contentItem);
+  const hasProgress = viewerProgress && !viewerProgress.notStarted && viewerProgress.positionSeconds > 0;
+  const isCompleted = viewerProgress?.isCompleted === true;
+
+  const handlePrimaryPress = () => {
+    if (hasProgress && !isCompleted) {
+      // Resume from saved position
+      onWatch(contentItem, viewerProgress.positionSeconds);
+    } else {
+      // Watch Now or Play Again from 0
+      onWatch(contentItem, 0);
+    }
   };
+
+  const handleStartOverPress = async () => {
+    const cid = contentItem.contentId || contentItem.id;
+    if (viewerId && cid) {
+      try {
+        await resetProgress(viewerId, cid);
+      } catch (e) {
+        console.warn('[DETAILS_SCREEN] Failed to reset progress:', e);
+      }
+    }
+    onWatch(contentItem, 0);
+  };
+
+  let primaryButtonLabel = 'Watch Now';
+  if (isCompleted) {
+    primaryButtonLabel = 'Play Again';
+  } else if (hasProgress) {
+    primaryButtonLabel = `Resume ${formatRuntime(viewerProgress.positionSeconds)}`;
+  }
+
+  const progressText = hasProgress && !isCompleted
+    ? `${Math.round(viewerProgress.progressPercent)}% watched`
+    : (isCompleted ? 'Completed' : undefined);
 
   const metadataString = [
     contentItem.genre,
     contentItem.runtime,
-    contentItem.year
+    contentItem.year,
+    progressText
   ].filter(Boolean).join(' • ');
 
   return (
@@ -120,11 +152,18 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
 
         <View style={styles.actions}>
           <FocusableButton
-            label="Watch Now"
-            onPress={handleWatchPress}
+            label={primaryButtonLabel}
+            onPress={handlePrimaryPress}
             hasTVPreferredFocus
             style={styles.primaryButton}
           />
+          {hasProgress && !isCompleted && (
+            <FocusableButton
+              label="Start Over"
+              onPress={handleStartOverPress}
+              style={styles.secondaryButton}
+            />
+          )}
           <FocusableButton
             label="Ask NarraView"
             onPress={() => {}}

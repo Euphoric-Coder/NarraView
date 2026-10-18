@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL, ADMIN_TOKEN } from "@/config";
+import { ADMIN_API_BASE_URL } from "@/config";
 
 function formatDuration(seconds?: number): string {
   if (!seconds || isNaN(seconds)) return "--:--";
@@ -36,8 +36,8 @@ function MediaViewerInner() {
     setError("");
     try {
       // 1. Fetch content metadata
-      const contentRes = await fetch(`${API_BASE_URL}/content/${contentId}`, {
-        headers: { 'X-Admin-Token': ADMIN_TOKEN }
+      const contentRes = await fetch(`${ADMIN_API_BASE_URL}/content/${contentId}`, {
+        
       });
       if (!contentRes.ok) {
         throw new Error("Unable to locate content record");
@@ -49,8 +49,8 @@ function MediaViewerInner() {
       // Fallback to presigned videoUrl returned by /content/{contentId} if available
       let resolvedUrl = "";
       try {
-        const mediaRes = await fetch(`${API_BASE_URL}/content/${contentId}/media-url`, {
-          headers: { 'X-Admin-Token': ADMIN_TOKEN }
+        const mediaRes = await fetch(`${ADMIN_API_BASE_URL}/content/${contentId}/media-url`, {
+          
         });
         if (mediaRes.ok) {
           const mediaData = await mediaRes.json();

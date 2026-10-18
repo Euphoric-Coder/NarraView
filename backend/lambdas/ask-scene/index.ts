@@ -31,11 +31,14 @@ interface AskRequest {
     label: string;
   };
   allowPreActivationTest?: boolean;
+  viewerId?: string;
+  watchedIntervals?: Array<{ start: number; end: number }>;
 }
 
 const REGION = process.env.AWS_REGION || 'eu-north-1';
 const TABLE_NAME = process.env.TABLE_NAME || '';
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
+const VIEWER_TABLE_NAME = process.env.VIEWER_TABLE_NAME || '';
 const AI_PROVIDER = process.env.AI_PROVIDER || 'bedrock-mantle';
 const BEDROCK_MANTLE_BASE_URL = process.env.BEDROCK_MANTLE_BASE_URL || 'https://bedrock-mantle.eu-north-1.api.aws/v1';
 const BEDROCK_MANTLE_MODEL = process.env.BEDROCK_MANTLE_MODEL || 'openai.gpt-oss-120b';
@@ -122,9 +125,26 @@ export const handler = async (event: any): Promise<any> => {
     }
 
     // Determine admin caller for Studio Temporal RAG Test tool (Requirements 58, 65)
-    const isAdmin = event.headers?.['x-admin-token'] === 'narraview-admin-token' ||
-      event.headers?.['X-Admin-Token'] === 'narraview-admin-token' ||
+    const adminToken = process.env.ADMIN_TOKEN || 'narraview-admin-token';
+    const isAdmin = event.headers?.['x-admin-token'] === adminToken ||
+      event.headers?.['X-Admin-Token'] === adminToken ||
       body.allowPreActivationTest === true;
+
+    // Fetch viewer watch state / intervals if viewerId provided (v0.17)
+    let watchedIntervals = body.watchedIntervals;
+    if (!watchedIntervals && body.viewerId && VIEWER_TABLE_NAME) {
+      try {
+        const progRes = await docClient.send(new GetCommand({
+          TableName: VIEWER_TABLE_NAME,
+          Key: { viewerId: body.viewerId, contentId: body.contentId }
+        }));
+        if (progRes.Item?.watchedIntervals) {
+          watchedIntervals = progRes.Item.watchedIntervals;
+        }
+      } catch (err) {
+        console.warn('[ASK_SCENE] Could not load viewer watch intervals:', err);
+      }
+    }
 
     // PROVIDER ABSTRACTION (Requirement 37, 38):
     // If title is Signal Lost, route through handcrafted provider to maintain 100% regression compatibility.
@@ -136,7 +156,9 @@ export const handler = async (event: any): Promise<any> => {
         timestamp: effectiveTimestamp,
         mode: mode as any,
         question: body.question,
-        requestId: event.requestContext?.requestId
+        requestId: event.requestContext?.requestId,
+        viewerId: body.viewerId,
+        watchedIntervals
       };
 
       const ragResponse = await temporalRagService.processRequest(ragRequest, {

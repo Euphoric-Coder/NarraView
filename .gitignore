@@ -13,3 +13,10 @@ CMakeUserPresets.json
 npm-debug.log
 
 README.md
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+!.env.example

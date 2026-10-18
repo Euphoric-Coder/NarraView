@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL, ADMIN_TOKEN } from "@/config";
+import { ADMIN_API_BASE_URL } from "@/config";
 
 function SegmentsViewerInner() {
   const params = useParams();
@@ -19,10 +19,8 @@ function SegmentsViewerInner() {
 
   const fetchSegments = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/content/${contentId}/segments`, {
-        headers: {
-          'X-Admin-Token': ADMIN_TOKEN
-        }
+      const res = await fetch(`${ADMIN_API_BASE_URL}/content/${contentId}/segments`, {
+        
       });
       if (!res.ok) throw new Error("Failed to fetch segments");
       const data = await res.json();

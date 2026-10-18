@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { StyleSheet, View, BackHandler, Text, ActivityIndicator, TVEventHandler as RNTVEventHandler } from 'react-native';
 
 import { ContentItem, RuntimeProvider } from '../types/content';
@@ -9,21 +9,42 @@ import { usePlaybackState } from '../player/usePlaybackState';
 import { FocusableButton } from '../components/FocusableButton';
 import { getCurrentScene } from '../utils/getCurrentScene';
 import { getContent } from '../services/contentApi';
+import { getViewerId } from '../services/viewerIdentity';
+import { startPlaybackSession } from '../services/viewerProgressApi';
+import { usePlaybackProgress } from '../hooks/usePlaybackProgress';
 
 interface PlayerScreenProps {
   item: ContentItem;
   onExit: () => void;
+  initialPositionSeconds?: number;
 }
 
-export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
+export const PlayerScreen = ({ item, onExit, initialPositionSeconds }: PlayerScreenProps) => {
   const [playerItem, setPlayerItem] = useState<ContentItem>(item);
   const videoRef = useRef<any>(null);
+  const videoPlayerInstanceRef = useRef<any>(null);
   const [isNarraViewOpen, setIsNarraViewOpen] = useState(false);
+  const isNarraViewOpenRef = useRef(false);
+  const handleCloseNarraViewRef = useRef<() => void>(() => {});
+  isNarraViewOpenRef.current = isNarraViewOpen;
   const wasPlayingBeforeNarraViewRef = useRef(false);
   const [frozenTimestamp, setFrozenTimestamp] = useState(0);
 
+  const [viewerId, setViewerId] = useState<string>('');
+  const [sessionId, setSessionId] = useState<string>('');
+  const hasAppliedResumeRef = useRef<boolean>(false);
+  const hasExitedRef = useRef<boolean>(false);
+  const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const canonicalContentId = playerItem.contentId || playerItem.id;
   const isAiReady = playerItem.aiReady === true || canonicalContentId === 'signal-lost';
+
+  // Keep instance ref updated so unmount cleanup can access player even after ref detachment
+  useEffect(() => {
+    if (videoRef.current) {
+      videoPlayerInstanceRef.current = videoRef.current;
+    }
+  });
 
   const {
     isPlaying,
@@ -48,6 +69,116 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
 
   const source = playerItem.videoSource?.trim();
 
+  // Progress hook with throttled cadence and event-driven flushes
+  const { flushProgress, handleSeek, handleEnd } = usePlaybackProgress({
+    viewerId,
+    contentId: canonicalContentId,
+    durationSeconds,
+    currentTimeSeconds,
+    isPlaying,
+    sessionId
+  });
+
+  // Centralized idempotent exit function (Requirements 15, 16, 19, 21, 22)
+  const exitPlayer = useCallback((fromUnmount = false) => {
+    if (hasExitedRef.current) {
+      console.log('[PLAYER_EXIT] Teardown already executed (idempotent guard)');
+      return;
+    }
+    hasExitedRef.current = true;
+    console.log('[PLAYER_EXIT] Executing exitPlayer teardown sequence, fromUnmount:', fromUnmount);
+
+    const player = videoRef.current || videoPlayerInstanceRef.current;
+
+    // 1. Flush progress (latest position persisted before teardown)
+    try {
+      flushProgress(false);
+    } catch (e) {
+      console.warn('[PLAYER_EXIT] flushProgress exception:', e);
+    }
+
+    // 2. Pause media immediately (stops video and audio output)
+    try {
+      setIsPlaying(false);
+      player?.pause?.();
+    } catch (e) {
+      console.warn('[PLAYER_EXIT] video pause exception:', e);
+    }
+
+    // 3. Stop / release / destroy media player
+    try {
+      player?.stop?.();
+    } catch (e) {
+      console.warn('[PLAYER_EXIT] video stop exception:', e);
+    }
+
+    // 4. Cancel timers
+    try {
+      clearHideControlsTimer();
+    } catch (e) { /* ignore */ }
+
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = null;
+    }
+
+    // 5. Navigate back if not already unmounted
+    if (!fromUnmount) {
+      onExit();
+    }
+  }, [flushProgress, setIsPlaying, clearHideControlsTimer, onExit]);
+
+  const exitPlayerRef = useRef(exitPlayer);
+  exitPlayerRef.current = exitPlayer;
+
+  // Unmount cleanup as secondary defense (Requirement 18)
+  // Must run ONLY on unmount, not on intermediate re-renders
+  useEffect(() => {
+    return () => {
+      exitPlayerRef.current(true);
+    };
+  }, []);
+
+  // Remote Back / hardwareBackPress handler (Requirements 17, 30)
+  // Registered once on mount, deregistered on unmount
+  useEffect(() => {
+    const backAction = () => {
+      // Requirement 30: If overlay is open, first Back closes overlay
+      if (isNarraViewOpenRef.current) {
+        handleCloseNarraViewRef.current();
+        return true;
+      }
+      // Second Back or playback Back exits player with full teardown
+      exitPlayerRef.current(false);
+      return true;
+    };
+
+    let backHandler: any = null;
+    if (BackHandler && typeof BackHandler.addEventListener === 'function') {
+      backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    }
+    return () => backHandler?.remove?.();
+  }, []);
+
+  // Initialize Viewer Session
+  useEffect(() => {
+    let isMounted = true;
+    const initSession = async () => {
+      const vid = await getViewerId();
+      if (!isMounted) return;
+      setViewerId(vid);
+
+      const sess = await startPlaybackSession(vid, canonicalContentId, initialPositionSeconds);
+      if (isMounted && sess?.sessionId) {
+        setSessionId(sess.sessionId);
+      }
+    };
+
+    initSession();
+    return () => { isMounted = false; };
+  }, [canonicalContentId, initialPositionSeconds]);
+
+  // Content state verification
   useEffect(() => {
     let isMounted = true;
     const cid = item.contentId || item.id;
@@ -104,27 +235,9 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
       try {
         const urlObj = new URL(source);
         console.log('[NarraView] source host:', (urlObj as any).hostname);
-      } catch (e) {}
+      } catch (e) { /* ignore */ }
     }
   }, [canonicalContentId, source]);
-
-  useEffect(() => {
-    const backAction = () => {
-      if (isNarraViewOpen) {
-        handleCloseNarraView();
-        return true;
-      }
-      clearHideControlsTimer();
-      onExit();
-      return true;
-    };
-
-    let backHandler: any = null;
-    if (BackHandler && typeof BackHandler.addEventListener === 'function') {
-      backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
-    }
-    return () => backHandler?.remove?.();
-  }, [isNarraViewOpen, onExit, clearHideControlsTimer, isPlaying]);
 
   useEffect(() => {
     const tvEventHandler = new RNTVEventHandler();
@@ -144,16 +257,18 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
 
   // Loading timeout
   useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout>;
     if (isBuffering && !isPlaying && !hasError && source) {
-      timeout = setTimeout(() => {
+      loadingTimeoutRef.current = setTimeout(() => {
         setIsBuffering(false);
         setHasError(true);
         setErrorMessage("We couldn't load " + playerItem.title + ".");
-      }, 10000);
+      }, 25000);
     }
     return () => {
-      if (timeout) clearTimeout(timeout);
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
+      }
     };
   }, [isBuffering, isPlaying, hasError, source, playerItem.title, setIsBuffering, setHasError, setErrorMessage]);
 
@@ -162,6 +277,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     showControls();
     if (videoRef.current) {
       const newTime = Math.max(0, currentTimeSeconds - 10);
+      handleSeek(newTime);
       videoRef.current.seek(newTime);
       setCurrentTimeSeconds(newTime);
     }
@@ -172,6 +288,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     showControls();
     if (videoRef.current && durationSeconds > 0) {
       const newTime = Math.min(durationSeconds, currentTimeSeconds + 10);
+      handleSeek(newTime);
       videoRef.current.seek(newTime);
       setCurrentTimeSeconds(newTime);
     }
@@ -182,6 +299,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     showControls();
     if (videoRef.current) {
       if (isPlaying) {
+        flushProgress(false);
         videoRef.current.pause();
       } else {
         videoRef.current.play();
@@ -207,6 +325,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     if (isPlaying) {
       setIsPlaying(false);
       if (videoRef.current) {
+        flushProgress(false);
         videoRef.current.pause();
       }
     }
@@ -223,12 +342,13 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
       }
     }
   };
+  handleCloseNarraViewRef.current = handleCloseNarraView;
 
   if (!source) {
     return (
       <View style={styles.errorScreen}>
         <Text style={styles.errorText}>No video source configured.</Text>
-        <FocusableButton label="[ Go Back ]" onPress={onExit} hasTVPreferredFocus />
+        <FocusableButton label="[ Go Back ]" onPress={() => exitPlayer(false)} hasTVPreferredFocus />
       </View>
     );
   }
@@ -237,7 +357,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     return (
       <View style={styles.errorScreen}>
         <Text style={styles.errorText}>Invalid video source.</Text>
-        <FocusableButton label="[ Go Back ]" onPress={onExit} hasTVPreferredFocus />
+        <FocusableButton label="[ Go Back ]" onPress={() => exitPlayer(false)} hasTVPreferredFocus />
       </View>
     );
   }
@@ -246,7 +366,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
     return (
       <View style={styles.errorScreen}>
         <Text style={styles.errorText}>{errorMessage}</Text>
-        <FocusableButton label="[ Go Back ]" onPress={onExit} hasTVPreferredFocus />
+        <FocusableButton label="[ Go Back ]" onPress={() => exitPlayer(false)} hasTVPreferredFocus />
       </View>
     );
   }
@@ -261,7 +381,25 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
         paused={!isPlaying}
         onLoad={({ duration, currentTime }) => {
           setDurationSeconds(duration);
-          setCurrentTimeSeconds(currentTime);
+          if (!hasAppliedResumeRef.current && initialPositionSeconds && initialPositionSeconds > 0) {
+            hasAppliedResumeRef.current = true;
+            const resumeTarget = initialPositionSeconds >= 5
+              ? Math.max(0, initialPositionSeconds - 3)
+              : initialPositionSeconds;
+
+            console.log('[VIEWER_TELEMETRY] RESUME_POSITION_APPLIED', {
+              contentId: canonicalContentId,
+              savedPosition: initialPositionSeconds,
+              appliedPosition: resumeTarget
+            });
+
+            if (videoRef.current && typeof videoRef.current.seek === 'function') {
+              videoRef.current.seek(resumeTarget);
+              setCurrentTimeSeconds(resumeTarget);
+            }
+          } else {
+            setCurrentTimeSeconds(currentTime);
+          }
         }}
         onProgress={({ currentTime }) => {
           if (!isNarraViewOpen) {
@@ -269,8 +407,8 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
           }
         }}
         onEnd={() => {
-          setIsPlaying(false);
-          onExit();
+          handleEnd();
+          exitPlayer(false);
         }}
         onBuffer={(buffering) => {
           setIsBuffering(buffering);
@@ -339,6 +477,7 @@ export const PlayerScreen = ({ item, onExit }: PlayerScreenProps) => {
           currentScene={currentScene}
           onClose={handleCloseNarraView}
           contextTimestamp={frozenTimestamp}
+          viewerId={viewerId}
         />
       ) : null}
     </View>

@@ -142,7 +142,8 @@ export function retrieveSafeEvidence(
   snapshot: TemporalSnapshot,
   query: string,
   mode: TemporalMode = 'ask',
-  topK: number = 8
+  topK: number = 8,
+  watchedIntervals?: Array<{ start: number; end: number }>
 ): { documents: RetrievalDocument[]; citations: Citation[] } {
   const docs = buildRetrievalDocuments(snapshot);
   if (docs.length === 0) {
@@ -162,6 +163,17 @@ export function retrieveSafeEvidence(
       // Recency boost towards current playback
       const age = snapshot.viewerTimestamp - doc.revealTime;
       if (age >= 0 && age < 60) score += 2;
+
+      // Personalized watch coverage prioritization (v0.17)
+      if (watchedIntervals && watchedIntervals.length > 0) {
+        const isWatched = watchedIntervals.some(i => doc.revealTime >= (i.start - 0.5) && doc.revealTime <= (i.end + 0.5));
+        if (isWatched) {
+          score += 25; // Strongly prioritize actually watched events
+        } else {
+          score -= 50; // Deprioritize events revealed during skipped sections
+        }
+      }
+
       doc.relevanceScore = score;
     });
 
