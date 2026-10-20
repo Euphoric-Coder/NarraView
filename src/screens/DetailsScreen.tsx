@@ -1,15 +1,16 @@
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, BackHandler } from 'react-native';
-import { TVFocusGuideView } from '@amazon-devices/react-native-kepler';
-import { ContentItem, RuntimeProvider } from '../types/content';
-import { FocusableButton } from '../components/FocusableButton';
-import { colors } from '../theme/colors';
-import { typography } from '../theme/typography';
-import { spacing } from '../theme/spacing';
-import { getContent } from '../services/contentApi';
-import { formatRuntime } from '../utils/formatRuntime';
-import { getViewerId } from '../services/viewerIdentity';
-import { getProgress, resetProgress, ViewerProgressRecord } from '../services/viewerProgressApi';
+import React, { useEffect, useState } from "react";
+import { StyleSheet, Text, View, BackHandler, ActivityIndicator, ScrollView } from "react-native";
+import { TVFocusGuideView } from "@amazon-devices/react-native-kepler";
+import { ContentItem, RuntimeProvider } from "../types/content";
+import { FocusableButton } from "../components/FocusableButton";
+import { colors } from "../theme/colors";
+import { typography } from "../theme/typography";
+import { spacing } from "../theme/spacing";
+import { getContent } from "../services/contentApi";
+import { formatRuntime } from "../utils/formatRuntime";
+import { getViewerId } from "../services/viewerIdentity";
+import { getProgress, resetProgress, ViewerProgressRecord } from "../services/viewerProgressApi";
+import { askNarraView, AskNarraViewResponse } from "../services/narraViewApi";
 
 interface DetailsScreenProps {
   onWatch: (freshItem?: ContentItem, initialPositionSeconds?: number) => void;
@@ -20,7 +21,13 @@ interface DetailsScreenProps {
 export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => {
   const [contentItem, setContentItem] = useState<ContentItem>(item);
   const [viewerProgress, setViewerProgress] = useState<ViewerProgressRecord | null>(null);
-  const [viewerId, setViewerId] = useState<string>('');
+  const [viewerId, setViewerId] = useState<string>("");
+
+  // Pre-resume Previously On state
+  const [isRecapModalVisible, setIsRecapModalVisible] = useState<boolean>(false);
+  const [isRecapLoading, setIsRecapLoading] = useState<boolean>(false);
+  const [recapData, setRecapData] = useState<AskNarraViewResponse | null>(null);
+  const [recapError, setRecapError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -43,11 +50,11 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
         const latest = await getContent(cid);
         if (latest && isMounted) {
           const canonicalContentId = latest.contentId || cid;
-          const runtimeProvider: RuntimeProvider | undefined = canonicalContentId === 'signal-lost'
-            ? 'handcrafted'
-            : (latest.runtimeProvider || (latest.aiReady ? 'intelligence' : undefined));
+          const runtimeProvider: RuntimeProvider | undefined = canonicalContentId === "signal-lost"
+            ? "handcrafted"
+            : (latest.runtimeProvider || (latest.aiReady ? "intelligence" : undefined));
           
-          const durationSec = typeof latest.durationSeconds === 'number' ? latest.durationSeconds : item.durationSeconds;
+          const durationSec = typeof latest.durationSeconds === "number" ? latest.durationSeconds : item.durationSeconds;
           const genre = latest.contentType
             ? latest.contentType.charAt(0).toUpperCase() + latest.contentType.slice(1)
             : item.genre;
@@ -81,18 +88,23 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
 
   useEffect(() => {
     const backAction = () => {
+      if (isRecapModalVisible) {
+        setIsRecapModalVisible(false);
+        return true;
+      }
       onBack();
       return true;
     };
     let backHandler: any = null;
-    if (BackHandler && typeof BackHandler.addEventListener === 'function') {
-      backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    if (BackHandler && typeof BackHandler.addEventListener === "function") {
+      backHandler = BackHandler.addEventListener("hardwareBackPress", backAction);
     }
     return () => backHandler?.remove?.();
-  }, [onBack]);
+  }, [onBack, isRecapModalVisible]);
 
   const hasProgress = viewerProgress && !viewerProgress.notStarted && viewerProgress.positionSeconds > 0;
   const isCompleted = viewerProgress?.isCompleted === true;
+  const shouldOfferRecap = Boolean(viewerProgress?.shouldOfferRecap);
 
   const handlePrimaryPress = () => {
     if (hasProgress && !isCompleted) {
@@ -110,29 +122,74 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
       try {
         await resetProgress(viewerId, cid);
       } catch (e) {
-        console.warn('[DETAILS_SCREEN] Failed to reset progress:', e);
+        console.warn("[DETAILS_SCREEN] Failed to reset progress:", e);
       }
     }
     onWatch(contentItem, 0);
   };
 
-  let primaryButtonLabel = 'Watch Now';
+  const handlePreviouslyOnPress = async () => {
+    const cid = contentItem.contentId || contentItem.id;
+    const resumePos = viewerProgress?.positionSeconds || 0;
+    setIsRecapModalVisible(true);
+    setIsRecapLoading(true);
+    setRecapError(null);
+
+    console.log("[DETAILS_PREVIOUSLY_ON_REQUEST]", {
+      viewerId,
+      contentId: cid,
+      resumePositionSeconds: resumePos,
+      timeAwaySeconds: viewerProgress?.timeAwaySeconds,
+      returnType: viewerProgress?.returnType
+    });
+
+    try {
+      const res = await askNarraView({
+        contentId: cid,
+        timestamp: resumePos,
+        viewerTimestamp: resumePos,
+        mode: "previously_on",
+        viewerId,
+        watchedIntervals: viewerProgress?.watchedIntervals,
+        resumeContext: {
+          resumePositionSeconds: resumePos,
+          watchedIntervals: viewerProgress?.watchedIntervals,
+          lastWatchedAt: viewerProgress?.lastWatchedAt,
+          timeAwaySeconds: viewerProgress?.timeAwaySeconds,
+          returnType: viewerProgress?.returnType
+        }
+      });
+      setRecapData(res);
+    } catch (err: any) {
+      console.error("[DETAILS_PREVIOUSLY_ON_ERROR]", err);
+      setRecapError("Unable to load Previously On at this time.");
+    } finally {
+      setIsRecapLoading(false);
+    }
+  };
+
+  let primaryButtonLabel = "Watch Now";
   if (isCompleted) {
-    primaryButtonLabel = 'Play Again';
+    primaryButtonLabel = "Play Again";
   } else if (hasProgress) {
     primaryButtonLabel = `Resume ${formatRuntime(viewerProgress.positionSeconds)}`;
   }
 
   const progressText = hasProgress && !isCompleted
     ? `${Math.round(viewerProgress.progressPercent)}% watched`
-    : (isCompleted ? 'Completed' : undefined);
+    : (isCompleted ? "Completed" : undefined);
+
+  const returnBadgeText = shouldOfferRecap && viewerProgress?.returnType === "LONG_RETURN"
+    ? "Welcome Back"
+    : undefined;
 
   const metadataString = [
     contentItem.genre,
     contentItem.runtime,
     contentItem.year,
-    progressText
-  ].filter(Boolean).join(' • ');
+    progressText,
+    returnBadgeText
+  ].filter(Boolean).join(" • ");
 
   return (
     <View style={styles.screen}>
@@ -154,9 +211,19 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
           <FocusableButton
             label={primaryButtonLabel}
             onPress={handlePrimaryPress}
-            hasTVPreferredFocus
+            hasTVPreferredFocus={!isRecapModalVisible}
             style={styles.primaryButton}
           />
+          {hasProgress && !isCompleted && (
+            <FocusableButton
+              label="Previously On"
+              onPress={handlePreviouslyOnPress}
+              style={[
+                styles.secondaryButton,
+                shouldOfferRecap && styles.recapSuggestedButton
+              ]}
+            />
+          )}
           {hasProgress && !isCompleted && (
             <FocusableButton
               label="Start Over"
@@ -172,6 +239,90 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
           />
         </View>
       </TVFocusGuideView>
+
+      {/* Pre-resume Previously On Modal */}
+      {isRecapModalVisible && (
+        <View style={styles.modalBackdrop}>
+          <TVFocusGuideView style={styles.modalCard} autoFocus>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderLeft}>
+                <Text style={styles.modalEyebrow}>PERSONALIZED RECAP</Text>
+                <Text style={styles.modalTitle}>Previously On {contentItem.title}</Text>
+              </View>
+              {viewerProgress?.positionSeconds ? (
+                <View style={styles.positionBadge}>
+                  <Text style={styles.positionBadgeText}>
+                    Resuming at {formatRuntime(viewerProgress.positionSeconds)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.modalDivider} />
+
+            <View style={styles.modalBody}>
+              {isRecapLoading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color={colors.accent} />
+                  <Text style={styles.loadingText}>Generating your personalized refresher...</Text>
+                  <Text style={styles.loadingSubtext}>Restoring context from your watched scenes</Text>
+                </View>
+              ) : recapError ? (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorText}>{recapError}</Text>
+                </View>
+              ) : recapData ? (
+                <ScrollView style={styles.recapScrollView} contentContainerStyle={styles.recapScrollContent}>
+                  {recapData.summary ? (
+                    <Text style={styles.recapSummary}>{recapData.summary}</Text>
+                  ) : null}
+
+                  {recapData.bullets && recapData.bullets.length > 0 ? (
+                    <View style={styles.bulletsList}>
+                      {recapData.bullets.map((bullet, idx) => (
+                        <View key={idx} style={styles.bulletRow}>
+                          <Text style={styles.bulletDot}>•</Text>
+                          <Text style={styles.bulletText}>{bullet}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {recapData.keyConcepts && recapData.keyConcepts.length > 0 ? (
+                    <View style={styles.chipsSection}>
+                      <Text style={styles.chipsSectionLabel}>KEY CONCEPTS:</Text>
+                      <View style={styles.chipsRow}>
+                        {recapData.keyConcepts.map((concept, idx) => (
+                          <View key={idx} style={styles.chip}>
+                            <Text style={styles.chipText}>{concept}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
+                </ScrollView>
+              ) : null}
+            </View>
+
+            <View style={styles.modalActions}>
+              <FocusableButton
+                label={`Resume ${formatRuntime(viewerProgress?.positionSeconds || 0)}`}
+                onPress={() => {
+                  setIsRecapModalVisible(false);
+                  onWatch(contentItem, viewerProgress?.positionSeconds || 0);
+                }}
+                hasTVPreferredFocus
+                style={styles.modalPrimaryBtn}
+              />
+              <FocusableButton
+                label="Back"
+                onPress={() => setIsRecapModalVisible(false)}
+                style={styles.modalSecondaryBtn}
+              />
+            </View>
+          </TVFocusGuideView>
+        </View>
+      )}
     </View>
   );
 };
@@ -191,13 +342,13 @@ const styles = StyleSheet.create({
   },
   vignetteOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#000000',
+    backgroundColor: "#000000",
     opacity: 0.3,
   },
   content: {
     flex: 1,
     paddingHorizontal: spacing.heroInset,
-    justifyContent: 'center',
+    justifyContent: "center",
     paddingBottom: 80,
   },
   textContainer: {
@@ -213,7 +364,7 @@ const styles = StyleSheet.create({
   metadata: {
     color: colors.accent,
     fontSize: typography.metadata.fontSize,
-    fontWeight: '700',
+    fontWeight: "700",
     marginTop: spacing.md,
     letterSpacing: typography.metadata.letterSpacing,
     textTransform: typography.metadata.textTransform,
@@ -226,7 +377,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   actions: {
-    flexDirection: 'row',
+    flexDirection: "row",
     marginTop: spacing.xxl,
   },
   primaryButton: {
@@ -234,5 +385,181 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     marginRight: spacing.md,
+  },
+  recapSuggestedButton: {
+    borderColor: colors.accent,
+    borderWidth: 1.5,
+  },
+
+  // Pre-resume Modal Styles
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.85)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 100,
+  },
+  modalCard: {
+    width: "70%",
+    maxWidth: 880,
+    maxHeight: "85%",
+    backgroundColor: "rgba(14, 16, 22, 0.98)",
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: "rgba(255, 176, 0, 0.35)",
+    padding: 32,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.8,
+    shadowRadius: 32,
+    elevation: 24,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  modalHeaderLeft: {
+    flex: 1,
+  },
+  modalEyebrow: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: "700",
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  modalTitle: {
+    color: colors.primaryText,
+    fontSize: 28,
+    fontWeight: "700",
+  },
+  positionBadge: {
+    backgroundColor: "rgba(255, 176, 0, 0.15)",
+    borderColor: "rgba(255, 176, 0, 0.4)",
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  positionBadgeText: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  modalDivider: {
+    height: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    marginBottom: 20,
+  },
+  modalBody: {
+    flex: 1,
+    minHeight: 180,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 40,
+  },
+  loadingText: {
+    color: colors.primaryText,
+    fontSize: 20,
+    fontWeight: "600",
+    marginTop: 16,
+  },
+  loadingSubtext: {
+    color: colors.mutedText,
+    fontSize: 16,
+    marginTop: 6,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 40,
+  },
+  errorText: {
+    color: colors.secondaryText,
+    fontSize: 18,
+    textAlign: "center",
+  },
+  recapScrollView: {
+    flex: 1,
+  },
+  recapScrollContent: {
+    paddingBottom: 16,
+  },
+  recapSummary: {
+    color: colors.secondaryText,
+    fontSize: 18,
+    lineHeight: 26,
+    marginBottom: 16,
+  },
+  bulletsList: {
+    marginBottom: 16,
+  },
+  bulletRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+  bulletDot: {
+    color: colors.accent,
+    fontSize: 20,
+    fontWeight: "bold",
+    marginRight: 12,
+    lineHeight: 26,
+  },
+  bulletText: {
+    color: colors.primaryText,
+    fontSize: 18,
+    lineHeight: 26,
+    flex: 1,
+  },
+  chipsSection: {
+    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 255, 255, 0.08)",
+  },
+  chipsSectionLabel: {
+    color: colors.mutedText,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginBottom: 8,
+  },
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  chip: {
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+  },
+  chipText: {
+    color: colors.secondaryText,
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  modalActions: {
+    flexDirection: "row",
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 255, 255, 0.1)",
+    paddingTop: 16,
+  },
+  modalPrimaryBtn: {
+    marginRight: spacing.md,
+  },
+  modalSecondaryBtn: {
   },
 });

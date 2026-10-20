@@ -8,6 +8,21 @@ interface WatchedInterval {
   end: number;
 }
 
+interface ViewerReturnContext {
+  viewerId: string;
+  contentId: string;
+  resumePositionSeconds: number;
+  lastWatchedAt?: string;
+  timeAwaySeconds: number;
+  watchedIntervals: WatchedInterval[];
+  watchedSeconds: number;
+  progressPercent: number;
+  returnType: string;
+  previousSessionId?: string;
+  currentSessionId?: string;
+  shouldOfferRecap: boolean;
+}
+
 interface ContinueWatchingItem {
   id: string;
   contentId: string;
@@ -21,6 +36,10 @@ interface ContinueWatchingItem {
   progressPercent: number;
   lastWatchedAt: string;
   isCompleted: boolean;
+  returnType?: string;
+  timeAwaySeconds?: number;
+  shouldOfferRecap?: boolean;
+  returnContext?: ViewerReturnContext;
 }
 
 interface HistoryItem extends ContinueWatchingItem {
@@ -30,12 +49,37 @@ interface HistoryItem extends ContinueWatchingItem {
   watchedIntervals: WatchedInterval[];
 }
 
+interface RecapTestResult {
+  title?: string;
+  summary?: string;
+  bullets?: string[];
+  keyPeople?: string[];
+  keyConcepts?: string[];
+  viewerTimestamp: number;
+  citations: Array<{
+    id: string;
+    text: string;
+    type: string;
+    revealTime: number;
+  }>;
+  safety: {
+    spoilerSafe: boolean;
+    maxRevealTimeUsed: number;
+    groundingPassed: boolean;
+    premiseValidated: boolean;
+  };
+  personalized?: boolean;
+  watchedCoverageUsed?: boolean;
+  returnType?: string;
+  latencyMs?: number;
+}
+
 const PRESET_VIEWERS = [
-  "test-viewer-1",
-  "interval-tester",
+  "narraview-demo-viewer",
   "viewer-a",
   "viewer-b",
-  "citycare-tester"
+  "interval-tester",
+  "test-viewer-1"
 ];
 
 function formatTime(seconds?: number): string {
@@ -45,13 +89,28 @@ function formatTime(seconds?: number): string {
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
+function formatDuration(seconds?: number): string {
+  if (!seconds || seconds <= 0) return "just now";
+  if (seconds < 60) return `${Math.round(seconds)}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
 export default function ViewerSessionsPage() {
-  const [viewerId, setViewerId] = useState("test-viewer-1");
-  const [activeViewerId, setActiveViewerId] = useState("test-viewer-1");
+  const [viewerId, setViewerId] = useState("narraview-demo-viewer");
+  const [activeViewerId, setActiveViewerId] = useState("narraview-demo-viewer");
   const [continueWatching, setContinueWatching] = useState<ContinueWatchingItem[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Recap Tester State
+  const [testContentId, setTestContentId] = useState("city-care-demo");
+  const [testTimestamp, setTestTimestamp] = useState("134.8");
+  const [isTestingRecap, setIsTestingRecap] = useState(false);
+  const [testResult, setTestResult] = useState<RecapTestResult | null>(null);
+  const [testError, setTestError] = useState("");
 
   const fetchViewerData = async (id: string) => {
     if (!id.trim()) return;
@@ -71,6 +130,11 @@ export default function ViewerSessionsPage() {
       if (!histRes.ok) throw new Error(`History request failed (${histRes.status})`);
       const histData = await histRes.json();
       setHistory(Array.isArray(histData) ? histData : []);
+
+      if (Array.isArray(cwData) && cwData.length > 0) {
+        setTestContentId(cwData[0].contentId);
+        setTestTimestamp(cwData[0].positionSeconds.toString());
+      }
     } catch (err: any) {
       console.error("Failed to fetch viewer data:", err);
       setError(err.message || "Failed to load viewer data");
@@ -93,65 +157,111 @@ export default function ViewerSessionsPage() {
     fetchViewerData(preset);
   };
 
+  const handleRunRecapTest = async () => {
+    setIsTestingRecap(true);
+    setTestError("");
+    setTestResult(null);
+
+    const ts = parseFloat(testTimestamp) || 0;
+    const currentHist = history.find(h => h.contentId === testContentId);
+    const watchedIntervals = currentHist?.watchedIntervals || [];
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/ai/ask`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-token": "narraview-admin-token"
+        },
+        body: JSON.stringify({
+          contentId: testContentId,
+          timestamp: ts,
+          viewerTimestamp: ts,
+          mode: "previously_on",
+          viewerId: activeViewerId,
+          watchedIntervals,
+          allowPreActivationTest: true,
+          resumeContext: {
+            resumePositionSeconds: ts,
+            watchedIntervals,
+            lastWatchedAt: currentHist?.lastWatchedAt,
+            timeAwaySeconds: currentHist?.timeAwaySeconds || 7200,
+            returnType: currentHist?.returnType || "SHORT_RETURN"
+          }
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(`Recap API failed with status ${res.status}`);
+      }
+
+      const data = await res.json();
+      setTestResult(data);
+    } catch (err: any) {
+      console.error("Failed to run recap test:", err);
+      setTestError(err.message || "Recap generation failed");
+    } finally {
+      setIsTestingRecap(false);
+    }
+  };
+
   return (
     <div className="relative min-h-[85vh] w-full isolate">
       {/* Background glow effects */}
       <div className="absolute top-0 -translate-y-12 left-1/4 w-96 h-96 bg-[#F5B800]/10 rounded-full blur-[120px] -z-10 pointer-events-none" />
       <div className="absolute bottom-0 translate-y-1/3 right-1/4 w-[30rem] h-[30rem] bg-indigo-500/10 rounded-full blur-[120px] -z-10 pointer-events-none" />
 
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-6 relative z-10">
+      {/* Page Header */}
+      <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-6">
         <div>
-          <h1 className="text-4xl md:text-5xl font-extralight tracking-tight text-white mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white via-white/90 to-white/60">
-            Viewer Sessions
+          <h1 className="text-3xl font-light tracking-wide text-white flex items-center gap-3">
+            <span className="text-[#F5B800]">Viewer Intelligence</span>
+            <span className="text-white/40 text-sm font-mono font-normal">v0.18</span>
           </h1>
-          <p className="text-white/40 text-sm tracking-wide uppercase font-medium">
-            Inspect Watch State, Continue Watching & Watched Intervals (Read-Only)
+          <p className="text-white/60 text-sm mt-1">
+            Viewer return session classification, watched coverage memory, and personalized recap tester.
           </p>
         </div>
-      </div>
 
-      {/* Search & Presets Form */}
-      <div className="bg-[#121216] border border-white/10 rounded-2xl p-6 mb-8">
-        <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-4 mb-4">
-          <div className="relative flex-1">
-            <input
-              type="text"
-              value={viewerId}
-              onChange={(e) => setViewerId(e.target.value)}
-              placeholder="Enter Viewer ID (e.g. test-viewer-1, viewer-a)..."
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-[#F5B800] transition-colors"
-            />
-          </div>
+        {/* Search & Selector */}
+        <form onSubmit={handleSearch} className="flex items-center gap-2">
+          <input
+            type="text"
+            value={viewerId}
+            onChange={(e) => setViewerId(e.target.value)}
+            placeholder="Enter Viewer ID..."
+            className="px-3.5 py-1.5 rounded-lg bg-white/5 border border-white/15 text-white text-sm focus:outline-none focus:border-[#F5B800] transition-colors font-mono w-48 md:w-64"
+          />
           <button
             type="submit"
             disabled={loading}
-            className="px-6 py-3 bg-[#F5B800] text-black font-semibold rounded-xl hover:bg-[#E59800] transition-colors disabled:opacity-50"
+            className="px-4 py-1.5 rounded-lg bg-[#F5B800] text-black font-semibold text-sm hover:bg-[#F5B800]/90 transition-all disabled:opacity-50"
           >
-            {loading ? "Inspecting..." : "Inspect Viewer"}
+            {loading ? "Loading..." : "Inspect"}
           </button>
         </form>
+      </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-white/40 uppercase font-medium tracking-wider mr-2">Quick Presets:</span>
-          {PRESET_VIEWERS.map((preset) => (
-            <button
-              key={preset}
-              onClick={() => handlePresetClick(preset)}
-              className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${
-                activeViewerId === preset
-                  ? "bg-[#F5B800]/20 border-[#F5B800] text-[#F5B800]"
-                  : "bg-white/5 border-white/10 text-white/60 hover:text-white hover:border-white/20"
-              }`}
-            >
-              {preset}
-            </button>
-          ))}
-        </div>
+      {/* Preset Chips */}
+      <div className="flex flex-wrap items-center gap-2 mb-8">
+        <span className="text-xs text-white/40 mr-1">Preset Viewers:</span>
+        {PRESET_VIEWERS.map((preset) => (
+          <button
+            key={preset}
+            onClick={() => handlePresetClick(preset)}
+            className={`px-3 py-1 rounded-full text-xs font-mono transition-all ${
+              activeViewerId === preset
+                ? "bg-[#F5B800] text-black font-semibold shadow-lg shadow-[#F5B800]/20"
+                : "bg-white/5 text-white/70 hover:bg-white/10 border border-white/5"
+            }`}
+          >
+            {preset}
+          </button>
+        ))}
       </div>
 
       {error && (
-        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm mb-8">
+        <div className="p-4 mb-8 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
           {error}
         </div>
       )}
@@ -173,7 +283,7 @@ export default function ViewerSessionsPage() {
       {/* Section 1: Continue Watching Rail */}
       <div className="mb-12">
         <h2 className="text-xl font-light tracking-wide text-white mb-4 flex items-center gap-2">
-          <span className="text-[#F5B800]">▶</span> Continue Watching Rail
+          <span className="text-[#F5B800]">▶</span> Continue Watching Rail & Return Status
         </h2>
 
         {continueWatching.length === 0 ? (
@@ -207,6 +317,23 @@ export default function ViewerSessionsPage() {
                       style={{ width: `${Math.min(100, Math.max(0, item.progressPercent))}%` }}
                     />
                   </div>
+
+                  {/* Return Context Badges */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                      {item.returnType || "NEW_VIEWER"}
+                    </span>
+                    {item.shouldOfferRecap && (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                        RECAP OFFERED
+                      </span>
+                    )}
+                    {item.timeAwaySeconds != null && (
+                      <span className="text-[10px] text-white/50">
+                        away {formatDuration(item.timeAwaySeconds)}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="text-[11px] text-white/40 pt-2 border-t border-white/5 flex justify-between items-center">
@@ -220,9 +347,9 @@ export default function ViewerSessionsPage() {
       </div>
 
       {/* Section 2: Complete Watch State & Interval Coverage */}
-      <div>
+      <div className="mb-12">
         <h2 className="text-xl font-light tracking-wide text-white mb-4 flex items-center gap-2">
-          <span className="text-indigo-400">◉</span> Watch State & Watched Intervals
+          <span className="text-indigo-400">◉</span> Watch State & Watched Intervals (Viewer Memory Input)
         </h2>
 
         {history.length === 0 ? (
@@ -247,6 +374,11 @@ export default function ViewerSessionsPage() {
                       }`}>
                         {record.isCompleted ? "Completed" : "In Progress"}
                       </span>
+                      {record.returnType && (
+                        <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-purple-300">
+                          {record.returnType}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-white/40 font-mono mt-1">{record.contentId}</div>
                   </div>
@@ -275,7 +407,7 @@ export default function ViewerSessionsPage() {
                 <div>
                   <div className="text-xs text-white/60 uppercase tracking-wider font-medium mb-2 flex items-center justify-between">
                     <span>Recorded Watched Intervals ({record.watchedIntervals?.length || 0}):</span>
-                    <span className="text-[11px] text-white/40 lowercase">discontinuous ranges recorded</span>
+                    <span className="text-[11px] text-white/40 lowercase">used for memory derivation & skipped filtering</span>
                   </div>
 
                   {!record.watchedIntervals || record.watchedIntervals.length === 0 ? (
@@ -306,6 +438,181 @@ export default function ViewerSessionsPage() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: Personalized Recap Tester (Requirement 45) */}
+      <div className="bg-[#121216] border border-[#F5B800]/30 rounded-xl p-6 shadow-xl mb-12">
+        <div className="flex items-center justify-between mb-4 pb-4 border-b border-white/10">
+          <div>
+            <h2 className="text-xl font-medium text-white flex items-center gap-2">
+              <span className="text-[#F5B800]">⚡</span> Personalized Recap Tester
+            </h2>
+            <p className="text-xs text-white/50 mt-1">
+              Test on-demand recap generation using viewer history, watched coverage scoring, and temporal boundary.
+            </p>
+          </div>
+          <span className="text-xs font-mono px-2.5 py-1 rounded bg-[#F5B800]/10 text-[#F5B800] border border-[#F5B800]/20">
+            POST /ai/ask (mode: previously_on)
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div>
+            <label className="block text-xs font-medium text-white/70 mb-1.5">Viewer ID</label>
+            <input
+              type="text"
+              value={activeViewerId}
+              readOnly
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white/90 text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-white/70 mb-1.5">Content ID</label>
+            <input
+              type="text"
+              value={testContentId}
+              onChange={(e) => setTestContentId(e.target.value)}
+              placeholder="e.g. city-care-demo"
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white text-sm font-mono focus:border-[#F5B800] outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-white/70 mb-1.5">Resume Timestamp (seconds)</label>
+            <input
+              type="text"
+              value={testTimestamp}
+              onChange={(e) => setTestTimestamp(e.target.value)}
+              placeholder="e.g. 134.8"
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white text-sm font-mono focus:border-[#F5B800] outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 mb-6">
+          <button
+            onClick={handleRunRecapTest}
+            disabled={isTestingRecap}
+            className="px-5 py-2.5 rounded-lg bg-[#F5B800] text-black font-semibold text-sm hover:bg-[#F5B800]/90 transition-all disabled:opacity-50 flex items-center gap-2"
+          >
+            {isTestingRecap ? (
+              <>
+                <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                <span>Generating Personalized Recap...</span>
+              </>
+            ) : (
+              <>
+                <span>▶ Generate Personalized Recap</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {testError && (
+          <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm mb-4">
+            {testError}
+          </div>
+        )}
+
+        {testResult && (
+          <div className="space-y-6 pt-4 border-t border-white/10">
+            {/* Safety & Personalization Assertion Header */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                <div className="text-[11px] text-white/40 uppercase">Spoiler Safe</div>
+                <div className="text-base font-semibold text-emerald-400 mt-0.5">
+                  {testResult.safety?.spoilerSafe ? "✓ Enforced" : "✗ Violation"}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                <div className="text-[11px] text-white/40 uppercase">Max Reveal Time</div>
+                <div className="text-base font-mono font-semibold text-[#F5B800] mt-0.5">
+                  {testResult.safety?.maxRevealTimeUsed?.toFixed(1)}s{" "}
+                  <span className="text-xs text-white/40 font-normal">
+                    (limit: {parseFloat(testTimestamp).toFixed(1)}s)
+                  </span>
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                <div className="text-[11px] text-white/40 uppercase">Watched Coverage</div>
+                <div className="text-base font-semibold text-indigo-300 mt-0.5">
+                  {testResult.watchedCoverageUsed ? "✓ Weighted" : "Not applied"}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                <div className="text-[11px] text-white/40 uppercase">Latency</div>
+                <div className="text-base font-mono text-white/80 mt-0.5">
+                  {testResult.latencyMs || 0}ms
+                </div>
+              </div>
+            </div>
+
+            {/* Generated Recap Card */}
+            <div className="bg-black/40 border border-white/10 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-base font-semibold text-[#F5B800]">
+                  {testResult.title || "Previously On"}
+                </h3>
+                {testResult.personalized && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    PERSONALIZED FOR THIS VIEWER
+                  </span>
+                )}
+              </div>
+
+              {testResult.summary && (
+                <p className="text-sm text-white/80 mb-4 leading-relaxed font-sans">
+                  {testResult.summary}
+                </p>
+              )}
+
+              {testResult.bullets && testResult.bullets.length > 0 && (
+                <div className="space-y-2 mb-4">
+                  {testResult.bullets.map((b, i) => (
+                    <div key={i} className="flex items-start gap-2.5 text-sm text-white/90">
+                      <span className="text-[#F5B800] font-bold">•</span>
+                      <span className="leading-relaxed">{b}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {testResult.keyConcepts && testResult.keyConcepts.length > 0 && (
+                <div className="pt-3 border-t border-white/5 flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-white/40">Key Concepts:</span>
+                  {testResult.keyConcepts.map((c, i) => (
+                    <span key={i} className="text-xs px-2 py-0.5 rounded bg-white/5 text-white/70 border border-white/10">
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Citations & Evidence Classification */}
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-white/50 mb-3">
+                Grounded Citations ({testResult.citations?.length || 0})
+              </h4>
+              <div className="space-y-2">
+                {testResult.citations?.map((c) => (
+                  <div
+                    key={c.id}
+                    className="p-3 rounded-lg bg-white/[0.03] border border-white/10 flex items-start justify-between gap-4"
+                  >
+                    <div className="text-xs text-white/80 flex-1">
+                      <span className="font-mono text-[#F5B800] mr-2">[{c.id}]</span>
+                      <span className="text-white/40 uppercase text-[10px] mr-2 font-mono">({c.type})</span>
+                      {c.text}
+                    </div>
+                    <div className="text-xs font-mono text-white/40 whitespace-nowrap">
+                      reveal: {c.revealTime.toFixed(1)}s
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>

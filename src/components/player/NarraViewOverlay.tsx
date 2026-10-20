@@ -374,9 +374,25 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
                     >
                       <Text style={styles.answerText}>{currentResponse.answer}</Text>
                     </Pressable>
-                  ) : currentResponse.mode === 'recap' ? (
+                  ) : (currentResponse.mode === 'recap' || currentResponse.mode === 'previously_on') ? (
                     <View style={styles.modeContentBlock}>
-                      <Text style={[styles.answerText, styles.recapText]}>{currentResponse.recap}</Text>
+                      {currentResponse.summary ? (
+                        <Text style={[styles.answerText, styles.recapText, { marginBottom: 14 }]}>
+                          {currentResponse.summary}
+                        </Text>
+                      ) : null}
+                      {currentResponse.bullets && currentResponse.bullets.length > 0 ? (
+                        <View style={{ marginBottom: 12 }}>
+                          {currentResponse.bullets.map((b: string, i: number) => (
+                            <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
+                              <Text style={{ color: '#F5B800', fontSize: 18, fontWeight: 'bold', marginRight: 10, lineHeight: 26 }}>•</Text>
+                              <Text style={{ color: '#E0E0E0', fontSize: 20, lineHeight: 28, flex: 1 }}>{b}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      ) : (!currentResponse.summary ? (
+                        <Text style={[styles.answerText, styles.recapText]}>{currentResponse.recap}</Text>
+                      ) : null)}
                     </View>
                   ) : currentResponse.mode === 'explain_simple' ? (
                     <View style={styles.modeContentBlock}>

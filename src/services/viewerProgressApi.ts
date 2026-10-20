@@ -7,6 +7,9 @@ export interface ViewerProgressRecord {
   contentId: string;
   positionSeconds: number;
   durationSeconds: number;
+  returnType?: string;
+  timeAwaySeconds?: number;
+  shouldOfferRecap?: boolean;
   progressPercent: number;
   watchedIntervals: WatchedInterval[];
   lastWatchedAt: string;
@@ -17,6 +20,10 @@ export interface ViewerProgressRecord {
   updatedAt: string;
   version: number;
   notStarted?: boolean;
+  returnType?: string;
+  timeAwaySeconds?: number;
+  shouldOfferRecap?: boolean;
+  returnContext?: any;
 }
 
 export interface ProgressUpdatePayload {
@@ -35,6 +42,10 @@ export interface PlaybackSessionResponse {
   previousProgress?: ViewerProgressRecord;
   isCompleted: boolean;
   createdAt: string;
+  returnType?: string;
+  timeAwaySeconds?: number;
+  shouldOfferRecap?: boolean;
+  returnContext?: any;
 }
 
 export interface ContinueWatchingItem {

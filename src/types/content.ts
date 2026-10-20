@@ -1,3 +1,25 @@
+export type ReturnType = "NEW_VIEWER" | "SAME_SESSION_RETURN" | "SHORT_RETURN" | "LONG_RETURN" | "REWATCH";
+
+export interface WatchedInterval {
+  start: number;
+  end: number;
+}
+
+export interface ViewerReturnContext {
+  viewerId: string;
+  contentId: string;
+  resumePositionSeconds: number;
+  lastWatchedAt?: string;
+  timeAwaySeconds: number;
+  watchedIntervals: WatchedInterval[];
+  watchedSeconds: number;
+  progressPercent: number;
+  returnType: ReturnType;
+  previousSessionId?: string;
+  currentSessionId?: string;
+  shouldOfferRecap: boolean;
+}
+
 export interface ContentScene {
   startTime: number;
   endTime: number;
@@ -22,6 +44,10 @@ export interface ContentItem {
   lastWatchedAt?: string;
   isCompleted?: boolean;
   watchedIntervals?: Array<{ start: number; end: number }>;
+  returnType?: ReturnType;
+  timeAwaySeconds?: number;
+  shouldOfferRecap?: boolean;
+  returnContext?: ViewerReturnContext;
   posterColor: string;
   posterUrl?: string;
   videoSource?: string;

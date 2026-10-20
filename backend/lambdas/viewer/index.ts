@@ -3,6 +3,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanComma
 import { ViewerProgress, PlaybackSessionResponse, ProgressUpdateRequest, ContinueWatchingItem, ViewerHistoryItem } from './types';
 import { mergeIntervals, mergeMultipleIntervals } from './intervals';
 import { validatePosition, calculateProgressPercent, evaluateCompletion, isEligibleForContinueWatching } from './progress';
+import { buildViewerReturnContext } from './returnIntelligence';
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient, {
@@ -86,14 +87,28 @@ export const handler = async (event: any): Promise<any> => {
         isCompleted
       });
 
+      const returnContext = buildViewerReturnContext(viewerId, contentId, existing, sessionId);
+
       const response: PlaybackSessionResponse = {
         sessionId,
         contentId,
         resumePositionSeconds,
         previousProgress: existing,
         isCompleted,
-        createdAt: now
+        createdAt: now,
+        returnType: returnContext.returnType,
+        timeAwaySeconds: returnContext.timeAwaySeconds,
+        shouldOfferRecap: returnContext.shouldOfferRecap,
+        returnContext
       };
+
+      console.log('[VIEWER_TELEMETRY] RECAP_OFFER_EVALUATED', {
+        viewerId,
+        contentId,
+        returnType: returnContext.returnType,
+        timeAwaySeconds: returnContext.timeAwaySeconds,
+        shouldOfferRecap: returnContext.shouldOfferRecap
+      });
 
       return {
         statusCode: 200,
@@ -288,16 +303,30 @@ export const handler = async (event: any): Promise<any> => {
             progressPercent: 0,
             watchedIntervals: [],
             isCompleted: false,
-            notStarted: true
+            notStarted: true,
+            returnType: 'NEW_VIEWER',
+            timeAwaySeconds: 0,
+            shouldOfferRecap: false
           })
         };
       }
 
+      const itemProg = existingRes.Item as ViewerProgress;
+      const retCtx = buildViewerReturnContext(viewerId, contentId, itemProg);
+      const enrichedProgress = {
+        ...itemProg,
+        returnType: retCtx.returnType,
+        timeAwaySeconds: retCtx.timeAwaySeconds,
+        shouldOfferRecap: retCtx.shouldOfferRecap,
+        returnContext: retCtx
+      };
+
       return {
         statusCode: 200,
         headers,
-        body: JSON.stringify(existingRes.Item)
+        body: JSON.stringify(enrichedProgress)
       };
+
     }
 
     // 5. GET /viewer/{viewerId}/continue-watching
@@ -347,6 +376,7 @@ export const handler = async (event: any): Promise<any> => {
           ? contentItem.contentType.charAt(0).toUpperCase() + contentItem.contentType.slice(1)
           : (contentItem?.genre || 'Feature');
 
+        const itemRetCtx = buildViewerReturnContext(viewerId, prog.contentId, prog);
         continueWatchingList.push({
           id: prog.contentId,
           contentId: prog.contentId,
@@ -365,7 +395,10 @@ export const handler = async (event: any): Promise<any> => {
           catalogVisible: contentItem ? contentItem.catalogVisible !== false : true,
           aiReady: contentItem?.aiReady === true,
           runtimeProvider: contentItem?.runtimeProvider,
-          videoSource: contentItem?.videoUrl
+          videoSource: contentItem?.videoUrl,
+          returnType: itemRetCtx.returnType,
+          timeAwaySeconds: itemRetCtx.timeAwaySeconds,
+          shouldOfferRecap: itemRetCtx.shouldOfferRecap
         });
       }
 

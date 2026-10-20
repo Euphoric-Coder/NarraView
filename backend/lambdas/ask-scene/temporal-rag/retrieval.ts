@@ -50,7 +50,7 @@ export function buildRetrievalDocuments(snapshot: TemporalSnapshot): RetrievalDo
     docs.push({
       id: f.id,
       type: 'fact',
-      text: f.statement,
+      text: f.statement || (f as any).text || '',
       revealTime: f.revealTime,
       segmentId: f.segmentId,
       evidenceTranscriptIndices: f.evidenceTranscriptIndices || []
@@ -153,32 +153,57 @@ export function retrieveSafeEvidence(
   const { normalized, keywords } = normalizeQuery(query, snapshot);
 
   if (mode === 'previously_on' || mode === 'recap') {
-    // Recap prioritizes events, key facts, and completed segments
+    const recapTopK = Math.max(topK, 10);
+    // Deterministic scoring for personalized return recap (Part L)
     docs.forEach(doc => {
       let score = 0;
-      if (doc.type === 'event') score += 10;
-      if (doc.type === 'segment') score += 8;
-      if (doc.type === 'fact') score += 5;
-      if (doc.type === 'relationship') score += 3;
-      // Recency boost towards current playback
-      const age = snapshot.viewerTimestamp - doc.revealTime;
-      if (age >= 0 && age < 60) score += 2;
+      if (doc.type === 'event') score += 12;
+      else if (doc.type === 'segment') score += 8;
+      else if (doc.type === 'fact') score += 6;
+      else if (doc.type === 'concept') score += 5;
+      else if (doc.type === 'entity' || doc.type === 'person') score += 4;
+      else if (doc.type === 'relationship') score += 3;
 
-      // Personalized watch coverage prioritization (v0.17)
+      // Proximity to current resume position
+      const age = snapshot.viewerTimestamp - doc.revealTime;
+      if (age >= 0 && age <= 60) {
+        score += 6; // Close to current segment
+      } else if (age > 60 && age <= 120) {
+        score += 3; // Recent past
+      }
+
+      // Personalized watch coverage classification & weighting (Part C, L)
       if (watchedIntervals && watchedIntervals.length > 0) {
         const isWatched = watchedIntervals.some(i => doc.revealTime >= (i.start - 0.5) && doc.revealTime <= (i.end + 0.5));
         if (isWatched) {
-          score += 25; // Strongly prioritize actually watched events
+          score += 25; // Watched coverage boost
+          doc.coverageStatus = 'watched';
         } else {
-          score -= 50; // Deprioritize events revealed during skipped sections
+          score -= 30; // Skipped range deprioritization
+          doc.coverageStatus = 'skipped';
         }
+      } else {
+        doc.coverageStatus = 'unknown';
       }
 
       doc.relevanceScore = score;
     });
 
     docs.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0) || b.revealTime - a.revealTime);
-    const selected = docs.slice(0, Math.min(topK, docs.length));
+    const selected = docs.slice(0, Math.min(recapTopK, docs.length));
+
+    const watchedCount = selected.filter(d => d.coverageStatus === 'watched').length;
+    const skippedCount = selected.filter(d => d.coverageStatus === 'skipped').length;
+
+    console.log('[VIEWER_TELEMETRY] RECAP_EVIDENCE_SELECTED', {
+      totalCandidates: docs.length,
+      selectedCount: selected.length,
+      watchedCount,
+      skippedCount,
+      viewerTimestamp: snapshot.viewerTimestamp,
+      maxRevealTime: selected.length > 0 ? Math.max(...selected.map(d => d.revealTime)) : 0
+    });
+
     return buildResult(selected, snapshot.viewerTimestamp);
   }
 
@@ -289,7 +314,7 @@ function buildResult(selectedDocs: RetrievalDocument[], viewerTimestamp: number)
       segmentId: doc.segmentId,
       revealTime: doc.revealTime,
       evidenceTranscriptIndices: doc.evidenceTranscriptIndices,
-      textSnippet: doc.text.length > 100 ? doc.text.substring(0, 97) + '...' : doc.text
+      textSnippet: (doc.text || '').length > 100 ? (doc.text || '').substring(0, 97) + '...' : (doc.text || '')
     };
   });
 

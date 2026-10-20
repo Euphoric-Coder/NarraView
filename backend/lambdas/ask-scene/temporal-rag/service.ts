@@ -1,18 +1,24 @@
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
-import { getTokenProvider } from '@aws/bedrock-token-generator';
-import OpenAI from 'openai';
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import { getTokenProvider } from "@aws/bedrock-token-generator";
+import OpenAI from "openai";
 import { 
   TemporalRagRequest, 
   TemporalRagResponse, 
   TemporalSnapshot, 
-  TemporalMode 
-} from './types';
-import { buildTemporalSnapshot } from './snapshot';
-import { retrieveSafeEvidence } from './retrieval';
-import { validateQuestionPremise } from './premise';
-import { validateGrounding } from './grounding';
+  TemporalMode,
+  ResumeContext
+} from "./types";
+import { buildTemporalSnapshot } from "./snapshot";
+import { retrieveSafeEvidence } from "./retrieval";
+import { validateQuestionPremise } from "./premise";
+import { validateGrounding } from "./grounding";
+import { 
+  deriveViewerMemory, 
+  intersectMemoryWithSafeSnapshot, 
+  ViewerContentMemory 
+} from "./memory";
 
 interface CachedPackage {
   package: any;
@@ -48,10 +54,10 @@ export class TemporalRagService {
     this.s3Client = options.s3Client;
     this.tableName = options.tableName;
     this.bucketName = options.bucketName;
-    this.mantleBaseUrl = options.mantleBaseUrl || process.env.BEDROCK_MANTLE_BASE_URL || 'https://bedrock-mantle.eu-north-1.api.aws/v1';
-    this.mantleModel = options.mantleModel || process.env.BEDROCK_MANTLE_MODEL || 'openai.gpt-oss-120b';
-    this.aiProvider = options.aiProvider || process.env.AI_PROVIDER || 'bedrock-mantle';
-    this.runtimeClient = new BedrockRuntimeClient({ region: options.region || process.env.AWS_REGION || 'eu-north-1' });
+    this.mantleBaseUrl = options.mantleBaseUrl || process.env.BEDROCK_MANTLE_BASE_URL || "https://bedrock-mantle.eu-north-1.api.aws/v1";
+    this.mantleModel = options.mantleModel || process.env.BEDROCK_MANTLE_MODEL || "openai.gpt-oss-120b";
+    this.aiProvider = options.aiProvider || process.env.AI_PROVIDER || "bedrock-mantle";
+    this.runtimeClient = new BedrockRuntimeClient({ region: options.region || process.env.AWS_REGION || "eu-north-1" });
   }
 
   /**
@@ -59,7 +65,7 @@ export class TemporalRagService {
    * Leverages safe in-memory cache keyed by contentId and version.
    */
   public async loadIntelligencePackage(contentId: string, expectedVersion?: number, s3KeyOverride?: string): Promise<{ package: any; version: number }> {
-    const versionKey = expectedVersion ? `v${expectedVersion}` : 'latest';
+    const versionKey = expectedVersion ? `v${expectedVersion}` : "latest";
     const cacheKey = `${contentId}:${versionKey}`;
 
     const cached = packageCache.get(cacheKey);
@@ -112,10 +118,16 @@ export class TemporalRagService {
     const startTime = Date.now();
     const requestId = request.requestId || `rag-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const contentId = request.contentId;
-    const viewerTimestamp = typeof request.viewerTimestamp === 'number' 
+    const viewerTimestamp = typeof request.viewerTimestamp === "number" 
       ? request.viewerTimestamp 
-      : (typeof request.timestamp === 'number' ? request.timestamp : 0);
-    const mode: TemporalMode = request.mode || 'ask';
+      : (typeof request.timestamp === "number" ? request.timestamp : 0);
+    const mode: TemporalMode = request.mode || "ask";
+
+    // Extract watched intervals and resume context (v0.18)
+    const resumeContext: ResumeContext | undefined = request.resumeContext;
+    const watchedIntervals = resumeContext?.watchedIntervals || request.watchedIntervals || [];
+    const returnType = resumeContext?.returnType;
+    const timeAwaySeconds = resumeContext?.timeAwaySeconds;
 
     console.log(JSON.stringify({
       event: "TEMPORAL_RAG_REQUEST",
@@ -123,8 +135,23 @@ export class TemporalRagService {
       contentId,
       viewerTimestamp,
       mode,
-      question: request.question ? "[REDACTED_OR_PRESENT]" : undefined
+      question: request.question ? "[REDACTED_OR_PRESENT]" : undefined,
+      returnType,
+      hasResumeContext: !!resumeContext,
+      watchedIntervalsCount: watchedIntervals.length
     }));
+
+    if (mode === "previously_on" || mode === "recap") {
+      console.log("[VIEWER_TELEMETRY] PERSONALIZED_RECAP_REQUEST", {
+        requestId,
+        viewerId: request.viewerId || "anonymous",
+        contentId,
+        viewerTimestamp,
+        returnType,
+        timeAwaySeconds,
+        watchedIntervalsCount: watchedIntervals.length
+      });
+    }
 
     // 1. Fetch content metadata from DynamoDB
     const contentRecord = await this.docClient.send(new GetCommand({
@@ -137,21 +164,20 @@ export class TemporalRagService {
       return this.buildUnavailableResponse(requestId, contentId, viewerTimestamp, mode, "Content not found");
     }
 
-    // 2. Validate runtime eligibility (Requirement 32)
+    // 2. Validate runtime eligibility
     const processing = contentItem.processing || {};
     const isEligible = 
-      processing.transcriptionStatus === 'complete' &&
-      processing.transcriptCorrectionStatus === 'complete' &&
-      processing.sceneDetectionStatus === 'complete' &&
-      processing.metadataExtractionStatus === 'complete' &&
-      processing.intelligenceCompilationStatus === 'complete';
+      processing.transcriptionStatus === "complete" &&
+      processing.transcriptCorrectionStatus === "complete" &&
+      processing.sceneDetectionStatus === "complete" &&
+      processing.metadataExtractionStatus === "complete" &&
+      processing.intelligenceCompilationStatus === "complete";
 
     if (!isEligible) {
       return this.buildUnavailableResponse(requestId, contentId, viewerTimestamp, mode, "Pipeline stages not complete");
     }
 
-    // 3. AI Ready enforcement (Requirements 33, 34, 65)
-    // If not aiReady and pre-activation admin test is not explicitly permitted: fail safe
+    // 3. AI Ready enforcement
     if (!contentItem.aiReady && !options.allowPreActivationTest) {
       console.log(JSON.stringify({
         event: "TEMPORAL_RAG_UNAVAILABLE",
@@ -184,12 +210,12 @@ export class TemporalRagService {
     const { package: intelligencePackage, version: intelligenceVersion } = 
       await this.loadIntelligencePackage(contentId, latestVersion, latestS3Key);
 
-    // Verify referential integrity (Requirement 32, 45)
+    // Verify referential integrity
     if (intelligencePackage.quality && intelligencePackage.quality.referentialIntegrity === false) {
       return this.buildUnavailableResponse(requestId, contentId, viewerTimestamp, mode, "Referential integrity failed");
     }
 
-    // 5. Build Safe Temporal Snapshot (Requirements 4, 5, 6, 7, 8)
+    // 5. Build Safe Temporal Snapshot (STRICT SPOILER FILTER: revealTime <= viewerTimestamp)
     const snapshot: TemporalSnapshot = buildTemporalSnapshot(intelligencePackage, viewerTimestamp);
 
     console.log(JSON.stringify({
@@ -207,8 +233,17 @@ export class TemporalRagService {
       maxRevealTimeUsed: snapshot.maxRevealTimeUsed
     }));
 
-    // 6. Premise Validation (Requirements 17, 18, 19)
-    if (mode === 'ask' && request.question) {
+    // 5b. Derive Viewer Content Memory & enforce Seek-Back Invariant
+    const rawMemory = deriveViewerMemory(
+      snapshot, 
+      watchedIntervals, 
+      intelligenceVersion, 
+      request.viewerId || "anonymous"
+    );
+    const effectiveMemory = intersectMemoryWithSafeSnapshot(rawMemory, snapshot);
+
+    // 6. Premise Validation
+    if (mode === "ask" && request.question) {
       const premiseCheck = validateQuestionPremise(request.question, snapshot, intelligencePackage);
       console.log(JSON.stringify({
         event: "PREMISE_VALIDATION_RESULT",
@@ -222,7 +257,7 @@ export class TemporalRagService {
           requestId,
           contentId,
           viewerTimestamp,
-          mode: 'ask',
+          mode: "ask",
           answer: premiseCheck.safeResponse || "That premise has not been established.",
           citations: [],
           safety: {
@@ -238,9 +273,15 @@ export class TemporalRagService {
       }
     }
 
-    // 7. Evidence Retrieval strictly from Safe Snapshot (Requirements 9, 10, 11, 12, 13)
-    const query = request.question || request.topic || '';
-    const { documents: retrievedDocs, citations } = retrieveSafeEvidence(snapshot, query, mode, 8, request.watchedIntervals);
+    // 7. Evidence Retrieval strictly from Safe Snapshot with Viewer Coverage Weighting
+    const query = request.question || request.topic || "";
+    const { documents: retrievedDocs, citations } = retrieveSafeEvidence(
+      snapshot, 
+      query, 
+      mode, 
+      mode === "previously_on" || mode === "recap" ? 10 : 8, 
+      watchedIntervals
+    );
 
     console.log(JSON.stringify({
       event: "TEMPORAL_RETRIEVAL_COMPLETE",
@@ -255,20 +296,38 @@ export class TemporalRagService {
     let rawModelOutput = "";
 
     try {
-      rawModelOutput = await this.invokeModel(snapshot, retrievedDocs, mode, request.question, request.watchedIntervals);
+      rawModelOutput = await this.invokeModel(
+        snapshot, 
+        retrievedDocs, 
+        mode, 
+        request.question, 
+        watchedIntervals, 
+        resumeContext, 
+        effectiveMemory
+      );
     } catch (modelErr: any) {
       console.error(JSON.stringify({
         event: "BEDROCK_RUNTIME_ERROR",
         requestId,
         errorMessage: modelErr.message
       }));
-      // Fail closed with safe fallback
-      return this.buildSafeFallbackResponse(requestId, contentId, viewerTimestamp, mode, citations, snapshot.maxRevealTimeUsed, intelligenceVersion, contentItem.aiReady, startTime);
+      return this.buildSafeFallbackResponse(
+        requestId, 
+        contentId, 
+        viewerTimestamp, 
+        mode, 
+        citations, 
+        snapshot.maxRevealTimeUsed, 
+        intelligenceVersion, 
+        contentItem.aiReady, 
+        startTime,
+        resumeContext
+      );
     }
 
     const modelLatencyMs = Date.now() - modelStart;
 
-    // 9. Grounding Validation (Requirements 20, 21, 22)
+    // 9. Grounding Validation
     const groundingResult = validateGrounding(rawModelOutput, retrievedDocs, mode);
     console.log(JSON.stringify({
       event: "GROUNDING_VALIDATION_RESULT",
@@ -279,6 +338,11 @@ export class TemporalRagService {
 
     let finalAnswer = "";
     let finalRecap = "";
+    let finalTitle = "Previously On";
+    let finalSummary = "";
+    let finalBullets: string[] = [];
+    let finalKeyPeople: string[] = [];
+    let finalKeyConcepts: string[] = [];
     let finalTakeaway = "";
     let finalQuestion = "";
     let finalOptions: any = undefined;
@@ -286,12 +350,19 @@ export class TemporalRagService {
     let finalExplanation = "";
 
     if (!groundingResult.valid) {
-      finalAnswer = groundingResult.safeFallback || "Based on what you've seen so far, that hasn't been established.";
+      finalAnswer = groundingResult.safeFallback || "Based on what you have seen so far, that has not been established.";
       finalRecap = finalAnswer;
+      finalSummary = finalAnswer;
+      finalBullets = [finalAnswer];
     } else {
       const p = groundingResult.parsedResponse || {};
       finalAnswer = p.answer || p.text || rawModelOutput;
       finalRecap = p.recap || p.answer || rawModelOutput;
+      finalTitle = p.title || "Previously On";
+      finalSummary = p.summary || p.recap || finalRecap;
+      finalBullets = Array.isArray(p.bullets) && p.bullets.length > 0 ? p.bullets : [finalRecap];
+      finalKeyPeople = Array.isArray(p.keyPeople) ? p.keyPeople : [];
+      finalKeyConcepts = Array.isArray(p.keyConcepts) ? p.keyConcepts : [];
       finalTakeaway = p.takeaway;
       finalQuestion = p.question;
       finalOptions = p.options;
@@ -299,7 +370,7 @@ export class TemporalRagService {
       finalExplanation = p.explanation;
     }
 
-    // 10. Temporal Invariant Assertion (Requirements 24, 44)
+    // 10. Temporal Invariant Assertion
     let maxCitationRevealTime = 0;
     for (const c of citations) {
       if (c.revealTime > viewerTimestamp + 0.001) {
@@ -309,7 +380,6 @@ export class TemporalRagService {
           citationRevealTime: c.revealTime,
           viewerTimestamp
         }));
-        // Fail closed
         return this.buildUnavailableResponse(requestId, contentId, viewerTimestamp, mode, "Safety assertion failed");
       }
       if (c.revealTime > maxCitationRevealTime) {
@@ -325,30 +395,49 @@ export class TemporalRagService {
       assertionPassed: maxCitationRevealTime <= viewerTimestamp + 0.001
     }));
 
+    const isRecapMode = mode === "previously_on" || mode === "recap";
+    const personalized = isRecapMode ? Boolean(resumeContext || watchedIntervals.length > 0) : undefined;
+    const watchedCoverageUsed = isRecapMode ? (watchedIntervals.length > 0) : undefined;
+
+    if (isRecapMode) {
+      console.log("[VIEWER_TELEMETRY] PERSONALIZED_RECAP_RESULT", {
+        requestId,
+        viewerId: request.viewerId || "anonymous",
+        contentId,
+        bulletsCount: finalBullets.length,
+        maxRevealTimeUsed: maxCitationRevealTime,
+        personalized,
+        watchedCoverageUsed,
+        returnType
+      });
+    }
+
     console.log(JSON.stringify({
       event: "TEMPORAL_RAG_COMPLETE",
       requestId,
-      contentId,
       mode,
-      viewerTimestamp,
-      totalLatencyMs: Date.now() - startTime,
-      modelLatencyMs,
-      intelligenceVersion,
-      spoilerSafe: true
+      latencyMs: Date.now() - startTime,
+      modelLatencyMs
     }));
 
     return {
       requestId,
       contentId,
       viewerTimestamp,
+      timestamp: viewerTimestamp,
       mode,
-      answer: mode === 'ask' || mode === 'explain_simple' ? finalAnswer : undefined,
-      recap: mode === 'previously_on' || mode === 'recap' ? finalRecap : undefined,
-      takeaway: mode === 'learn' ? finalTakeaway : undefined,
-      question: mode === 'learn' ? finalQuestion : undefined,
-      options: mode === 'learn' ? finalOptions : undefined,
-      correctOptionId: mode === 'learn' ? finalCorrectOptionId : undefined,
-      explanation: mode === 'learn' ? finalExplanation : undefined,
+      answer: mode === "ask" || mode === "explain_simple" ? finalAnswer : undefined,
+      recap: isRecapMode ? finalRecap : undefined,
+      title: isRecapMode ? finalTitle : undefined,
+      summary: isRecapMode ? finalSummary : undefined,
+      bullets: isRecapMode ? finalBullets : undefined,
+      keyPeople: isRecapMode && finalKeyPeople.length > 0 ? finalKeyPeople : undefined,
+      keyConcepts: isRecapMode && finalKeyConcepts.length > 0 ? finalKeyConcepts : undefined,
+      takeaway: mode === "learn" ? finalTakeaway : undefined,
+      question: mode === "learn" ? finalQuestion : undefined,
+      options: mode === "learn" ? finalOptions : undefined,
+      correctOptionId: mode === "learn" ? finalCorrectOptionId : undefined,
+      explanation: mode === "learn" ? finalExplanation : undefined,
       citations,
       safety: {
         spoilerSafe: true,
@@ -358,7 +447,10 @@ export class TemporalRagService {
       },
       intelligenceVersion,
       aiReady: contentItem.aiReady,
-      latencyMs: Date.now() - startTime
+      latencyMs: Date.now() - startTime,
+      personalized,
+      watchedCoverageUsed,
+      returnType
     };
   }
 
@@ -367,11 +459,15 @@ export class TemporalRagService {
     retrievedDocs: any[],
     mode: TemporalMode,
     userQuestion?: string,
-    watchedIntervals?: Array<{ start: number; end: number }>
+    watchedIntervals?: Array<{ start: number; end: number }>,
+    resumeContext?: ResumeContext,
+    memory?: ViewerContentMemory
   ): Promise<string> {
-    const evidenceText = retrievedDocs.map((d, i) => `[E${i + 1}] (${d.type.toUpperCase()}) ${d.text}`).join('\n');
+    const evidenceText = retrievedDocs
+      .map((d, i) => `[E${i + 1}] (${d.type.toUpperCase()}) [COVERAGE: ${d.coverageStatus || "unknown"}] ${d.text}`)
+      .join("\n");
     const systemPrompt = this.buildSystemPrompt(snapshot.viewerTimestamp, mode);
-    const userPrompt = this.buildUserPrompt(snapshot, evidenceText, mode, userQuestion, watchedIntervals);
+    const userPrompt = this.buildUserPrompt(snapshot, evidenceText, mode, userQuestion, watchedIntervals, resumeContext, memory);
 
     console.log(JSON.stringify({
       event: "BEDROCK_RUNTIME_REQUEST",
@@ -381,7 +477,7 @@ export class TemporalRagService {
       viewerTimestamp: snapshot.viewerTimestamp
     }));
 
-    if (this.aiProvider === 'bedrock-mantle') {
+    if (this.aiProvider === "bedrock-mantle") {
       if (!this.tokenProvider) {
         this.tokenProvider = getTokenProvider();
       }
@@ -389,14 +485,14 @@ export class TemporalRagService {
       const client = new OpenAI({
         apiKey: token,
         baseURL: this.mantleBaseUrl,
-        defaultQuery: { project: 'default' }
+        defaultQuery: { project: "default" }
       });
 
       const response = await client.chat.completions.create({
         model: this.mantleModel,
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
         ],
         temperature: 0.1,
         max_tokens: 1000
@@ -407,9 +503,9 @@ export class TemporalRagService {
       return output;
     } else {
       const command = new ConverseCommand({
-        modelId: 'eu.amazon.nova-pro-v1:0',
+        modelId: "eu.amazon.nova-pro-v1:0",
         system: [{ text: systemPrompt }],
-        messages: [{ role: 'user', content: [{ text: userPrompt }] }],
+        messages: [{ role: "user", content: [{ text: userPrompt }] }],
         inferenceConfig: { temperature: 0.1, maxTokens: 1000 }
       });
       const res = await this.runtimeClient.send(command);
@@ -432,7 +528,7 @@ ABSOLUTE SPOILER SAFETY RULES:
 4. Never say "You will find out later" or "As the story progresses" because hints themselves spoil.
 5. Do NOT use external or world knowledge about this content. The context provided is the sole truth.`;
 
-    if (mode === 'learn') {
+    if (mode === "learn") {
       return `${base}
 You are generating a Quick Check quiz for Learn Mode.
 Return valid JSON matching this schema:
@@ -449,42 +545,104 @@ Return valid JSON matching this schema:
 }`;
     }
 
-    if (mode === 'previously_on' || mode === 'recap') {
+    if (mode === "previously_on" || mode === "recap") {
       return `${base}
-Provide a concise, engaging recap of key events and facts revealed so far.
-Do not exceed 3-4 sentences. Do not mention future developments.`;
+You are generating a personalized Previously On recap for a returning viewer.
+Return a valid JSON object matching this schema:
+{
+  "title": "Previously On",
+  "summary": "1-2 sentence high-level refresher",
+  "bullets": [
+    "Concise reminder point 1",
+    "Concise reminder point 2"
+  ],
+  "keyPeople": ["Person Name"],
+  "keyConcepts": ["Concept Name"]
+}
+
+RECAP PERSONALIZATION AND SKIPPED-CONTENT RULES:
+1. Heavily prioritize evidence marked [COVERAGE: watched]. These are events and facts the viewer actually experienced.
+2. If evidence is marked [COVERAGE: skipped], do NOT falsely claim the viewer saw or learned it. Do NOT say "You saw...", "You learned...", or "Earlier you discovered...".
+3. Avoid mentioning skipped material unless strictly required to understand the current section. If strictly necessary, frame it neutrally: "The video introduced X during a section you skipped."
+4. Do NOT summarize the whole video. Remind the viewer only of the minimum necessary context to resume watching.
+5. Keep bullets punchy, direct, and TV-friendly.`;
     }
 
-    if (mode === 'explain_simple') {
+    if (mode === "explain_simple") {
       return `${base}
 Explain the requested concept in simple, accessible terms using only the facts and context revealed so far.
-Do not use advanced concepts or terminology introduced later in the content.`;
+If viewer memory indicates the viewer has already seen the concept introduced, you may use a gentle reminder tone ("Earlier, you saw...").
+If the viewer skipped that introduction, do NOT say "You saw"—frame it neutrally ("This was introduced as...").`;
     }
 
     return `${base}
-Answer the user's question directly and concisely using only the revealed facts.`;
+Answer the user's question directly and concisely using only the revealed facts.
+If viewer memory indicates the viewer previously watched the introduction to an entity or concept, use a reminder tone ("Earlier, you saw..." or "Earlier, CityCare introduced...").
+If the viewer skipped that introduction, do NOT say "You saw"—state neutrally ("This has been introduced as...").`;
   }
 
-  private buildUserPrompt(snapshot: TemporalSnapshot, evidenceText: string, mode: TemporalMode, userQuestion?: string, watchedIntervals?: Array<{ start: number; end: number }>): string {
-    let coverageNote = '';
-    if (watchedIntervals && watchedIntervals.length > 0 && (mode === 'previously_on' || mode === 'recap')) {
-      coverageNote = `\nVIEWER WATCHED COVERAGE: The viewer has watched intervals: ${watchedIntervals.map(i => `[${i.start}s - ${i.end}s]`).join(', ')}. If any content occurred during skipped periods, do not state that the viewer watched it. Focus on what was revealed during their watched coverage.\n`;
+  private buildUserPrompt(
+    snapshot: TemporalSnapshot, 
+    evidenceText: string, 
+    mode: TemporalMode, 
+    userQuestion?: string, 
+    watchedIntervals?: Array<{ start: number; end: number }>,
+    resumeContext?: ResumeContext,
+    memory?: ViewerContentMemory
+  ): string {
+    let returnInfo = "";
+    if (resumeContext) {
+      returnInfo = `\nRETURN CONTEXT:
+Return Classification: ${resumeContext.returnType || "UNKNOWN"}
+Time Away: ${resumeContext.timeAwaySeconds != null ? resumeContext.timeAwaySeconds + " seconds" : "Not specified"}
+Resume Position: ${resumeContext.resumePositionSeconds != null ? resumeContext.resumePositionSeconds + "s" : snapshot.viewerTimestamp + "s"}
+`;
+    }
+
+    let lengthInstruction = "";
+    if (mode === "previously_on" || mode === "recap") {
+      if (snapshot.viewerTimestamp < 45) {
+        lengthInstruction = "Target length: 1-2 concise bullets.";
+      } else if (resumeContext?.returnType === "LONG_RETURN") {
+        lengthInstruction = "Target length: 3-5 concise bullets (the viewer has been away for a long time).";
+      } else {
+        lengthInstruction = "Target length: 2-3 concise bullets.";
+      }
+    }
+
+    let memoryNotes = "";
+    if (memory && (mode === "ask" || mode === "explain_simple")) {
+      const seenEntities = memory.knownEntityIds.filter(id => memory.entityConfidence[id] === "seen");
+      const skippedEntities = Object.keys(memory.entityConfidence).filter(id => memory.entityConfidence[id] === "not_seen");
+      const seenConcepts = memory.knownConceptIds.filter(id => memory.conceptConfidence[id] === "seen");
+      const skippedConcepts = Object.keys(memory.conceptConfidence).filter(id => memory.conceptConfidence[id] === "not_seen");
+
+      const notes: string[] = [];
+      if (seenEntities.length > 0 || seenConcepts.length > 0) {
+        notes.push(`Viewer watched introductions to: ${[...seenEntities, ...seenConcepts].join(", ")}. (Can use "Earlier you saw...").`);
+      }
+      if (skippedEntities.length > 0 || skippedConcepts.length > 0) {
+        notes.push(`Viewer SKIPPED introductions to: ${[...skippedEntities, ...skippedConcepts].join(", ")}. (Do NOT say "You saw"; frame neutrally).`);
+      }
+      if (notes.length > 0) {
+        memoryNotes = `\nVIEWER FAMILIARITY CONTEXT:\n${notes.join("\n")}\n`;
+      }
     }
 
     let msg = `Content Title: ${snapshot.title}
-Viewer Current Playback Timestamp: ${snapshot.viewerTimestamp.toFixed(2)}s
-${coverageNote}
+Viewer Playback Timestamp: ${snapshot.viewerTimestamp.toFixed(2)}s
+${returnInfo}${memoryNotes}
 REVEALED EVIDENCE (KNOWN SO FAR):
 ${evidenceText || "No evidence has been revealed yet."}
 `;
 
-    if (mode === 'ask' && userQuestion) {
+    if (mode === "ask" && userQuestion) {
       msg += `\nViewer Question:\n${userQuestion}`;
-    } else if (mode === 'explain_simple') {
+    } else if (mode === "explain_simple") {
       msg += `\nTopic to explain simply:\n${userQuestion || "The core concept revealed so far"}`;
-    } else if (mode === 'previously_on' || mode === 'recap') {
-      msg += `\nGenerate a brief recap of what has occurred up to this timestamp.`;
-    } else if (mode === 'learn') {
+    } else if (mode === "previously_on" || mode === "recap") {
+      msg += `\nGenerate a personalized Previously On recap. ${lengthInstruction}`;
+    } else if (mode === "learn") {
       msg += `\nGenerate a Learn Mode takeaway and 3-option quiz based on the revealed evidence.`;
     }
 
@@ -502,6 +660,7 @@ ${evidenceText || "No evidence has been revealed yet."}
       requestId,
       contentId,
       viewerTimestamp: timestamp,
+      timestamp,
       mode,
       answer: "NarraView intelligence isn't available for this title right now.",
       recap: "NarraView intelligence isn't available for this title right now.",
@@ -526,16 +685,22 @@ ${evidenceText || "No evidence has been revealed yet."}
     maxReveal: number,
     version: number,
     aiReady: boolean,
-    startTime: number
+    startTime: number,
+    resumeContext?: ResumeContext
   ): TemporalRagResponse {
     const text = "That isn't established in what you've seen so far.";
+    const isRecap = mode === "previously_on" || mode === "recap";
     return {
       requestId,
       contentId,
       viewerTimestamp: timestamp,
+      timestamp,
       mode,
-      answer: mode === 'ask' || mode === 'explain_simple' ? text : undefined,
-      recap: mode === 'previously_on' || mode === 'recap' ? text : undefined,
+      answer: mode === "ask" || mode === "explain_simple" ? text : undefined,
+      recap: isRecap ? text : undefined,
+      title: isRecap ? "Previously On" : undefined,
+      summary: isRecap ? text : undefined,
+      bullets: isRecap ? [text] : undefined,
       citations,
       safety: {
         spoilerSafe: true,
@@ -545,7 +710,9 @@ ${evidenceText || "No evidence has been revealed yet."}
       },
       intelligenceVersion: version,
       aiReady,
-      latencyMs: Date.now() - startTime
+      latencyMs: Date.now() - startTime,
+      personalized: isRecap ? Boolean(resumeContext) : undefined,
+      returnType: resumeContext?.returnType
     };
   }
 }

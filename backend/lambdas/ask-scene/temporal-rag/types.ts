@@ -70,6 +70,7 @@ export interface TemporalSnapshot {
   contentId: string;
   title: string;
   viewerTimestamp: number;
+  timestamp?: number;
   unlockedFacts: SafeFact[];
   unlockedEvents: SafeEvent[];
   unlockedEntities: SafeEntity[];
@@ -98,6 +99,7 @@ export interface RetrievalDocument {
   evidenceTranscriptIndices: number[];
   aliases?: string[];
   relevanceScore?: number;
+  coverageStatus?: 'watched' | 'skipped' | 'unknown';
 }
 
 export interface PremiseCheckResult {
@@ -113,6 +115,14 @@ export interface GroundingCheckResult {
   parsedResponse?: any;
 }
 
+export interface ResumeContext {
+  resumePositionSeconds?: number;
+  watchedIntervals?: Array<{ start: number; end: number }>;
+  lastWatchedAt?: string;
+  timeAwaySeconds?: number;
+  returnType?: string;
+}
+
 export interface TemporalRagRequest {
   contentId: string;
   viewerTimestamp: number;
@@ -123,6 +133,7 @@ export interface TemporalRagRequest {
   topic?: string;
   viewerId?: string;
   watchedIntervals?: Array<{ start: number; end: number }>;
+  resumeContext?: ResumeContext;
 }
 
 export interface TemporalRagResponse {
@@ -132,6 +143,11 @@ export interface TemporalRagResponse {
   mode: TemporalMode;
   answer?: string;
   recap?: string;
+  title?: string;
+  summary?: string;
+  bullets?: string[];
+  keyPeople?: string[];
+  keyConcepts?: string[];
   takeaway?: string;
   question?: string;
   options?: { id: string; text: string }[];
@@ -147,4 +163,7 @@ export interface TemporalRagResponse {
   intelligenceVersion: number;
   aiReady?: boolean;
   latencyMs?: number;
+  personalized?: boolean;
+  watchedCoverageUsed?: boolean;
+  returnType?: string;
 }

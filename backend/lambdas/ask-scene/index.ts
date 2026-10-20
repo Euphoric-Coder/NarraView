@@ -3,7 +3,7 @@ import { getTokenProvider } from '@aws/bedrock-token-generator';
 import OpenAI from 'openai';
 import { S3Client } from '@aws-sdk/client-s3';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { buildContextSnapshot } from './engine';
 import { 
   buildAskPrompt, 
@@ -33,6 +33,7 @@ interface AskRequest {
   allowPreActivationTest?: boolean;
   viewerId?: string;
   watchedIntervals?: Array<{ start: number; end: number }>;
+  resumeContext?: any;
 }
 
 const REGION = process.env.AWS_REGION || 'eu-north-1';
@@ -130,8 +131,9 @@ export const handler = async (event: any): Promise<any> => {
       event.headers?.['X-Admin-Token'] === adminToken ||
       body.allowPreActivationTest === true;
 
-    // Fetch viewer watch state / intervals if viewerId provided (v0.17)
-    let watchedIntervals = body.watchedIntervals;
+    // Fetch viewer watch state / intervals and resumeContext (v0.17 & v0.18)
+    const resumeContext = body.resumeContext;
+    let watchedIntervals = resumeContext?.watchedIntervals || body.watchedIntervals;
     if (!watchedIntervals && body.viewerId && VIEWER_TABLE_NAME) {
       try {
         const progRes = await docClient.send(new GetCommand({
@@ -158,7 +160,8 @@ export const handler = async (event: any): Promise<any> => {
         question: body.question,
         requestId: event.requestContext?.requestId,
         viewerId: body.viewerId,
-        watchedIntervals
+        watchedIntervals,
+        resumeContext
       };
 
       const ragResponse = await temporalRagService.processRequest(ragRequest, {
@@ -379,7 +382,15 @@ UNKNOWN / NOT ESTABLISHED:
         if (mode === 'ask' || mode === 'explain_simple') {
           finalResponsePayload = { ...baseRes, answer: p.answer || p.recap || "Valid response missing text", sceneLabel: currentSceneLabel, confidence: 1.0 };
         } else if (mode === 'recap' || mode === 'previously_on') {
-          finalResponsePayload = { ...baseRes, recap: p.recap || p.answer || "Valid response missing recap" };
+          const recapText = p.recap || p.answer || "Valid response missing recap";
+          const sentences = recapText.split(/(?<=[.?!])\s+/).filter((s: string) => s.trim().length > 5);
+          finalResponsePayload = { 
+            ...baseRes, 
+            recap: recapText,
+            title: "Previously On",
+            summary: recapText,
+            bullets: sentences.slice(0, 4)
+          };
         } else if (mode === 'learn') {
           finalResponsePayload = {
             ...baseRes,

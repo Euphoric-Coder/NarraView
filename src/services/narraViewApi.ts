@@ -6,19 +6,29 @@ export interface AskNarraViewRequest {
   viewerTimestamp?: number;
   requestId?: string;
   question?: string;
-  mode?: "ask" | "recap" | "explain_simple" | "learn";
+  mode?: "ask" | "recap" | "previously_on" | "explain_simple" | "learn";
   scene?: {
     startTime: number;
     endTime: number;
     label: string;
   };
   viewerId?: string;
+  watchedIntervals?: Array<{ start: number; end: number }>;
+  resumeContext?: any;
 }
 
 export interface AskNarraViewResponse {
   mode: string;
   answer?: string;
   recap?: string;
+  title?: string;
+  summary?: string;
+  bullets?: string[];
+  keyPeople?: string[];
+  keyConcepts?: string[];
+  personalized?: boolean;
+  watchedCoverageUsed?: boolean;
+  returnType?: string;
   takeaway?: string;
   question?: string;
   options?: { id: string; text: string }[];
