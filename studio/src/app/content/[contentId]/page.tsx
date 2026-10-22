@@ -4,6 +4,8 @@ import { useEffect, useState, Suspense } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ADMIN_API_BASE_URL } from "@/config";
+import EditContentModal from "@/components/EditContentModal";
+import DeleteContentModal from "@/components/DeleteContentModal";
 
 function ContentDetailInner() {
   const params = useParams();
@@ -21,6 +23,8 @@ function ContentDetailInner() {
   const [showReprocessModal, setShowReprocessModal] = useState(false);
   const [reprocessStartFrom, setReprocessStartFrom] = useState<'transcript_correction' | 'transcription'>('transcript_correction');
   const [reprocessLoading, setReprocessLoading] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   useEffect(() => {
     fetchDetail();
@@ -270,94 +274,210 @@ function ContentDetailInner() {
       {/* Header */}
       <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-white/10 pb-6 relative z-10">
         <div>
-          <Link href="/" className="group flex items-center gap-2 text-white/50 hover:text-white mb-6 text-sm transition-colors w-fit">
-            <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+          <Link
+            href="/"
+            className="group flex items-center gap-2 text-white/50 hover:text-white mb-6 text-sm transition-colors w-fit">
+            <svg
+              className="w-4 h-4 transition-transform group-hover:-translate-x-1"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 19l-7-7 7-7"
+              />
+            </svg>
             Back to Catalog
           </Link>
           <div className="flex items-center gap-4">
-            <h1 className="text-3xl font-light tracking-wide text-white/90">{content.title}</h1>
+            <h1 className="text-3xl font-light tracking-wide text-white/90">
+              {content.title}
+            </h1>
             <span className="text-[10px] font-mono uppercase tracking-widest px-2.5 py-1 rounded border border-white/10 bg-white/5 text-white/70">
               {canonicalContentId}
             </span>
           </div>
         </div>
 
-        {/* Global Pipeline Reprocess CTA */}
-        {!isReferenceTitle && (
-          <div className="flex items-center gap-3">
+        {/* Actions Bar */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowEditModal(true)}
+            className="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white font-medium text-xs uppercase tracking-wider px-4 py-2.5 rounded-lg border border-white/10 transition-colors cursor-pointer">
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+              />
+            </svg>
+            <span>Edit</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowDeleteModal(true)}
+            className="inline-flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-medium text-xs uppercase tracking-wider px-4 py-2.5 rounded-lg border border-red-500/20 transition-colors cursor-pointer">
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+            <span>Delete Content</span>
+          </button>
+
+          {!isReferenceTitle && (
             <button
               onClick={() => setShowReprocessModal(true)}
               disabled={isPipelineActive || !content.mediaPlayable}
               title="Regenerates AI-derived artifacts for this title. Existing media is preserved."
-              className="group relative inline-flex items-center gap-2.5 bg-gradient-to-r from-[#F5B800] to-amber-500 hover:from-amber-400 hover:to-amber-500 text-black font-semibold text-xs uppercase tracking-wider px-4 py-2.5 rounded-lg shadow-lg shadow-amber-500/20 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-            >
-              <svg className={`w-4 h-4 ${isPipelineActive ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              className="group relative inline-flex items-center gap-2.5 bg-gradient-to-r from-[#F5B800] to-amber-500 hover:from-amber-400 hover:to-amber-500 text-black font-semibold text-xs uppercase tracking-wider px-4 py-2.5 rounded-lg shadow-lg shadow-amber-500/20 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+              <svg
+                className={`w-4 h-4 ${
+                  isPipelineActive
+                    ? 'animate-spin'
+                    : 'group-hover:rotate-180 transition-transform duration-500'
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
               </svg>
-              <span>{isPipelineActive ? 'Pipeline Reprocessing...' : 'Reprocess AI Pipeline'}</span>
+              <span>
+                {isPipelineActive
+                  ? 'Pipeline Reprocessing...'
+                  : 'Reprocess AI Pipeline'}
+              </span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-        
         {/* Left Column: Media & System Overview */}
         <div className="lg:col-span-4 space-y-6">
           <div className="aspect-[2/3] w-full rounded-2xl overflow-hidden relative border border-white/10 bg-black/40 shadow-2xl group">
             {content.posterUrl ? (
-              <img src={content.posterUrl} alt={content.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+              <img
+                src={content.posterUrl}
+                alt={content.title}
+                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+              />
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center text-white/20 p-6 text-center">
-                <svg className="w-16 h-16 stroke-1 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" /></svg>
-                <span className="text-xs tracking-widest uppercase">No Visual Poster</span>
+                <svg
+                  className="w-16 h-16 stroke-1 mb-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"
+                  />
+                </svg>
+                <span className="text-xs tracking-widest uppercase">
+                  No Visual Poster
+                </span>
               </div>
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
           </div>
-          
+
           <div className="bg-white/[0.02] backdrop-blur-xl rounded-2xl border border-white/10 p-5 space-y-5 shadow-xl">
             <div>
-              <div className="text-xs uppercase tracking-widest text-white/30 mb-2">Media Status</div>
+              <div className="text-xs uppercase tracking-widest text-white/30 mb-2">
+                Media Status
+              </div>
               <div className="flex items-center gap-3">
                 <div className="relative flex items-center justify-center">
-                  <div className={`w-3 h-3 rounded-full ${content.mediaPlayable ? 'bg-emerald-400' : 'bg-white/20'}`} />
-                  {content.mediaPlayable && <div className="absolute w-3 h-3 rounded-full bg-emerald-400 animate-ping opacity-50" />}
+                  <div
+                    className={`w-3 h-3 rounded-full ${
+                      content.mediaPlayable ? 'bg-emerald-400' : 'bg-white/20'
+                    }`}
+                  />
+                  {content.mediaPlayable && (
+                    <div className="absolute w-3 h-3 rounded-full bg-emerald-400 animate-ping opacity-50" />
+                  )}
                 </div>
-                <span className={`text-sm font-semibold tracking-wide ${content.mediaPlayable ? 'text-emerald-400' : 'text-white/50'}`}>
+                <span
+                  className={`text-sm font-semibold tracking-wide ${
+                    content.mediaPlayable ? 'text-emerald-400' : 'text-white/50'
+                  }`}>
                   {content.mediaPlayable ? 'Stream Available' : 'Offline'}
                 </span>
               </div>
             </div>
-            
+
             <div className="pt-5 border-t border-white/10">
-              <div className="text-xs uppercase tracking-widest text-white/30 mb-2">NarraView Engine (v0.16)</div>
+              <div className="text-xs uppercase tracking-widest text-white/30 mb-2">
+                NarraView Engine (v0.16)
+              </div>
               <div className="flex items-center gap-3">
                 <div className="relative flex items-center justify-center">
-                  <div className={`w-3 h-3 rounded-full ${content.aiReady ? 'bg-[#F5B800]' : 'bg-white/20'}`} />
-                  {content.aiReady && <div className="absolute w-3 h-3 rounded-full bg-[#F5B800] animate-ping opacity-50" />}
+                  <div
+                    className={`w-3 h-3 rounded-full ${
+                      content.aiReady ? 'bg-[#F5B800]' : 'bg-white/20'
+                    }`}
+                  />
+                  {content.aiReady && (
+                    <div className="absolute w-3 h-3 rounded-full bg-[#F5B800] animate-ping opacity-50" />
+                  )}
                 </div>
-                <span className={`text-sm font-semibold tracking-wide ${content.aiReady ? 'text-[#F5B800]' : 'text-white/50'}`}>
-                  {content.aiReady ? 'Intelligence Armed' : 'Dormant (Controlled separately)'}
+                <span
+                  className={`text-sm font-semibold tracking-wide ${
+                    content.aiReady ? 'text-[#F5B800]' : 'text-white/50'
+                  }`}>
+                  {content.aiReady
+                    ? 'Intelligence Armed'
+                    : 'Dormant (Controlled separately)'}
                 </span>
               </div>
             </div>
 
             {content.transcriptCorrection && (
               <div className="pt-5 border-t border-white/10">
-                <div className="text-xs uppercase tracking-widest text-white/30 mb-2">Correction Stats</div>
+                <div className="text-xs uppercase tracking-widest text-white/30 mb-2">
+                  Correction Stats
+                </div>
                 <div className="space-y-1.5 text-xs text-white/70">
                   <div className="flex justify-between">
                     <span className="text-white/40">Total Fixes:</span>
-                    <span className="font-mono text-[#F5B800] font-semibold">{content.transcriptCorrection.correctionCount || 0}</span>
+                    <span className="font-mono text-[#F5B800] font-semibold">
+                      {content.transcriptCorrection.correctionCount || 0}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-white/40">High Confidence:</span>
-                    <span className="font-mono text-emerald-400">{content.transcriptCorrection.highConfidenceCount || 0}</span>
+                    <span className="font-mono text-emerald-400">
+                      {content.transcriptCorrection.highConfidenceCount || 0}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-white/40">Medium Confidence:</span>
-                    <span className="font-mono text-amber-400">{content.transcriptCorrection.mediumConfidenceCount || 0}</span>
+                    <span className="font-mono text-amber-400">
+                      {content.transcriptCorrection.mediumConfidenceCount || 0}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -365,23 +485,33 @@ function ContentDetailInner() {
 
             {content.intelligence && (
               <div className="pt-5 border-t border-white/10">
-                <div className="text-xs uppercase tracking-widest text-white/30 mb-2">Content Intelligence</div>
+                <div className="text-xs uppercase tracking-widest text-white/30 mb-2">
+                  Content Intelligence
+                </div>
                 <div className="space-y-1.5 text-xs text-white/70">
                   <div className="flex justify-between">
                     <span className="text-white/40">Package Version:</span>
-                    <span className="font-mono text-[#F5B800] font-semibold">v{content.intelligence.latestVersion || 1}</span>
+                    <span className="font-mono text-[#F5B800] font-semibold">
+                      v{content.intelligence.latestVersion || 1}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-white/40">Integrity Score:</span>
-                    <span className="font-mono text-emerald-400 font-semibold">{content.intelligence.qualityScore ?? 100}%</span>
+                    <span className="font-mono text-emerald-400 font-semibold">
+                      {content.intelligence.qualityScore ?? 100}%
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-white/40">Segments:</span>
-                    <span className="font-mono text-white/90">{content.intelligence.segmentCount || 0}</span>
+                    <span className="font-mono text-white/90">
+                      {content.intelligence.segmentCount || 0}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-white/40">Canonical Facts:</span>
-                    <span className="font-mono text-white/90">{content.intelligence.factCount || 0}</span>
+                    <span className="font-mono text-white/90">
+                      {content.intelligence.factCount || 0}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -391,41 +521,92 @@ function ContentDetailInner() {
 
         {/* Right Column: Metadata & Pipeline Controls */}
         <div className="lg:col-span-8 space-y-8">
-          
           {/* Metadata Card */}
           <div className="bg-white/[0.02] backdrop-blur-xl rounded-2xl border border-white/10 p-8 shadow-xl relative overflow-hidden group">
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-[80px] -translate-y-1/2 translate-x-1/3 pointer-events-none transition-opacity opacity-50 group-hover:opacity-100" />
-            
+
             <h2 className="text-xl font-light tracking-wide text-white/90 border-b border-white/10 pb-4 mb-6 flex items-center gap-3">
-              <svg className="w-5 h-5 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <svg
+                className="w-5 h-5 text-white/40"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
               Core Metadata
             </h2>
-            
-            <div className="grid grid-cols-2 gap-y-8 gap-x-12 relative z-10">
+
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-y-8 gap-x-8 relative z-10">
               <div>
-                <span className="block text-xs uppercase tracking-widest text-white/40 mb-2">Format Type</span>
-                <span className="text-white/90 capitalize font-medium">{content.contentType}</span>
+                <span className="block text-xs uppercase tracking-widest text-white/40 mb-2">
+                  Format Type
+                </span>
+                <span className="text-white/90 capitalize font-medium">
+                  {content.contentType}
+                </span>
               </div>
               <div>
-                <span className="block text-xs uppercase tracking-widest text-white/40 mb-2">Dialect</span>
-                <span className="text-white/90 uppercase font-medium">{content.language}</span>
+                <span className="block text-xs uppercase tracking-widest text-white/40 mb-2">
+                  Content Category
+                </span>
+                <span className="text-white/90 capitalize font-medium text-[#F5B800]">
+                  {content.contentCategory || 'other'}
+                </span>
+              </div>
+              <div>
+                <span className="block text-xs uppercase tracking-widest text-white/40 mb-2">
+                  Dialect
+                </span>
+                <span className="text-white/90 uppercase font-medium">
+                  {content.language}
+                </span>
               </div>
               <div className="col-span-2">
-                <span className="block text-xs uppercase tracking-widest text-white/40 mb-2">Synopsis</span>
-                <span className="text-white/70 leading-relaxed text-sm md:text-base">{content.description || "No description logged in the database."}</span>
+                <span className="block text-xs uppercase tracking-widest text-white/40 mb-2">
+                  Synopsis
+                </span>
+                <span className="text-white/70 leading-relaxed text-sm md:text-base">
+                  {content.description ||
+                    'No description logged in the database.'}
+                </span>
               </div>
               <div className="col-span-2 pt-4 border-t border-white/5">
-                <span className="block text-xs uppercase tracking-widest text-white/40 mb-4">Stream Source</span>
+                <span className="block text-xs uppercase tracking-widest text-white/40 mb-4">
+                  Stream Source
+                </span>
                 {content.mediaPlayable !== false ? (
-                  <Link 
-                    href={`/content/${canonicalContentId}/media`} 
-                    className="group/btn inline-flex items-center justify-center gap-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white py-2.5 px-5 rounded-lg transition-all duration-300"
-                  >
-                    <svg className="w-4 h-4 text-[#F5B800] transition-transform group-hover/btn:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    <span className="font-medium tracking-wide text-sm">Launch Media</span>
+                  <Link
+                    href={`/content/${canonicalContentId}/media`}
+                    className="group/btn inline-flex items-center justify-center gap-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white py-2.5 px-5 rounded-lg transition-all duration-300">
+                    <svg
+                      className="w-4 h-4 text-[#F5B800] transition-transform group-hover/btn:scale-110"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <span className="font-medium tracking-wide text-sm">
+                      Launch Media
+                    </span>
                   </Link>
                 ) : (
-                  <span className="text-white/30 text-sm italic">No stream URI registered</span>
+                  <span className="text-white/30 text-sm italic">
+                    No stream URI registered
+                  </span>
                 )}
               </div>
             </div>
@@ -435,8 +616,21 @@ function ContentDetailInner() {
           <div className="bg-white/[0.02] backdrop-blur-xl rounded-2xl border border-white/10 p-8 shadow-xl space-y-6">
             <div className="border-b border-white/10 pb-4 flex justify-between items-center">
               <div className="flex items-center gap-3">
-                <svg className="w-5 h-5 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
-                <h2 className="text-xl font-light tracking-wide text-white/90">AI Processing Pipeline</h2>
+                <svg
+                  className="w-5 h-5 text-white/40"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"
+                  />
+                </svg>
+                <h2 className="text-xl font-light tracking-wide text-white/90">
+                  AI Processing Pipeline
+                </h2>
               </div>
               <span className="text-[10px] uppercase tracking-widest bg-white/5 border border-white/10 px-2 py-1 rounded text-white/40 font-mono">
                 Authoritative Sequence
@@ -449,36 +643,93 @@ function ContentDetailInner() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="w-2.5 h-2.5 rounded-full bg-[#F5B800] animate-pulse" />
-                    <span className="text-xs font-bold uppercase tracking-wider text-[#F5B800]">Reprocessing AI Pipeline</span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#F5B800]">
+                      Reprocessing AI Pipeline
+                    </span>
                   </div>
                   <span className="text-[11px] font-mono text-white/60 capitalize">
-                    Current: <strong className="text-white">{pStage?.replace(/_/g, ' ') || 'initializing'}</strong>
+                    Current:{' '}
+                    <strong className="text-white">
+                      {pStage?.replace(/_/g, ' ') || 'initializing'}
+                    </strong>
                   </span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px] font-mono text-white/70">
                   <div className="flex items-center gap-1.5">
-                    <span className={tStatus === 'complete' ? 'text-emerald-400' : pStage === 'transcription' ? 'text-[#F5B800] animate-pulse' : 'text-white/30'}>
-                      {tStatus === 'complete' ? '✓' : pStage === 'transcription' ? '●' : '○'} Transcribe
+                    <span
+                      className={
+                        tStatus === 'complete'
+                          ? 'text-emerald-400'
+                          : pStage === 'transcription'
+                          ? 'text-[#F5B800] animate-pulse'
+                          : 'text-white/30'
+                      }>
+                      {tStatus === 'complete'
+                        ? '✓'
+                        : pStage === 'transcription'
+                        ? '●'
+                        : '○'}{' '}
+                      Transcribe
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className={cStatus === 'complete' ? 'text-emerald-400' : pStage === 'transcript_correction' ? 'text-[#F5B800] animate-pulse font-medium' : 'text-white/30'}>
-                      {cStatus === 'complete' ? '✓' : pStage === 'transcript_correction' ? '●' : '○'} Correction
-                      {pStage === 'transcript_correction' && content.processing?.batchProgress?.stage === 'transcript_correction' && content.processing?.batchProgress?.current && (
-                        <span className="text-[10px] ml-1 opacity-80 font-mono">
-                          (Batch {content.processing.batchProgress.current}/{content.processing.batchProgress.total})
-                        </span>
-                      )}
+                    <span
+                      className={
+                        cStatus === 'complete'
+                          ? 'text-emerald-400'
+                          : pStage === 'transcript_correction'
+                          ? 'text-[#F5B800] animate-pulse font-medium'
+                          : 'text-white/30'
+                      }>
+                      {cStatus === 'complete'
+                        ? '✓'
+                        : pStage === 'transcript_correction'
+                        ? '●'
+                        : '○'}{' '}
+                      Correction
+                      {pStage === 'transcript_correction' &&
+                        content.processing?.batchProgress?.stage ===
+                          'transcript_correction' &&
+                        content.processing?.batchProgress?.current && (
+                          <span className="text-[10px] ml-1 opacity-80 font-mono">
+                            (Batch {content.processing.batchProgress.current}/
+                            {content.processing.batchProgress.total})
+                          </span>
+                        )}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className={sStatus === 'complete' ? 'text-emerald-400' : pStage === 'scene_detection' ? 'text-[#F5B800] animate-pulse' : 'text-white/30'}>
-                      {sStatus === 'complete' ? '✓' : pStage === 'scene_detection' ? '●' : '○'} Segments
+                    <span
+                      className={
+                        sStatus === 'complete'
+                          ? 'text-emerald-400'
+                          : pStage === 'scene_detection'
+                          ? 'text-[#F5B800] animate-pulse'
+                          : 'text-white/30'
+                      }>
+                      {sStatus === 'complete'
+                        ? '✓'
+                        : pStage === 'scene_detection'
+                        ? '●'
+                        : '○'}{' '}
+                      Segments
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className={kStatus === 'complete' ? 'text-emerald-400' : pStage === 'knowledge_extraction' ? 'text-[#F5B800] animate-pulse' : 'text-white/30'}>
-                      {kStatus === 'complete' ? '✓' : pStage === 'knowledge_extraction' ? '●' : '○'} Knowledge
+                    <span
+                      className={
+                        kStatus === 'complete'
+                          ? 'text-emerald-400'
+                          : pStage === 'knowledge_extraction'
+                          ? 'text-[#F5B800] animate-pulse'
+                          : 'text-white/30'
+                      }>
+                      {kStatus === 'complete'
+                        ? '✓'
+                        : pStage === 'knowledge_extraction'
+                        ? '●'
+                        : '○'}{' '}
+                      Knowledge
                     </span>
                   </div>
                 </div>
@@ -491,26 +742,28 @@ function ContentDetailInner() {
                 <div>
                   <div className="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-red-400" />
-                    Pipeline Stopped at {pErrorStage ? pErrorStage.replace(/_/g, ' ') : 'Stage'}
+                    Pipeline Stopped at{' '}
+                    {pErrorStage ? pErrorStage.replace(/_/g, ' ') : 'Stage'}
                   </div>
                   <div className="text-[11px] text-white/60 mt-1">
-                    An error occurred during automated chain execution. Downstream stages were halted safely.
+                    An error occurred during automated chain execution.
+                    Downstream stages were halted safely.
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {pErrorStage && (
                     <button
-                      onClick={() => handleReprocessPipeline(pErrorStage as any)}
+                      onClick={() =>
+                        handleReprocessPipeline(pErrorStage as any)
+                      }
                       disabled={reprocessLoading}
-                      className="text-xs font-semibold bg-[#F5B800] hover:bg-amber-400 text-black px-3 py-1.5 rounded transition-all"
-                    >
+                      className="text-xs font-semibold bg-[#F5B800] hover:bg-amber-400 text-black px-3 py-1.5 rounded transition-all">
                       Resume Pipeline
                     </button>
                   )}
                   <button
                     onClick={() => setShowReprocessModal(true)}
-                    className="text-xs font-semibold bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded transition-all"
-                  >
+                    className="text-xs font-semibold bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded transition-all">
                     Restart
                   </button>
                 </div>
@@ -518,22 +771,23 @@ function ContentDetailInner() {
             )}
 
             <div className="space-y-6 pt-2">
-              
               {/* 1. Media Ingestion */}
-              <TimelineItem 
+              <TimelineItem
                 number="1"
-                label="Media Ingestion" 
-                status={content.mediaPlayable ? "Secure" : "Pending"} 
-                active={content.mediaPlayable} 
+                label="Media Ingestion"
+                status={content.mediaPlayable ? 'Secure' : 'Pending'}
+                active={content.mediaPlayable}
               />
 
               {/* 2. Amazon Transcribe Pipeline */}
               <div>
-                <TimelineItem 
+                <TimelineItem
                   number="2"
-                  label="Amazon Transcribe" 
-                  status={stageErrors['transcription'] ? 'failed' : tStatus} 
-                  active={!stageErrors['transcription'] && tStatus === 'complete'}
+                  label="Amazon Transcribe"
+                  status={stageErrors['transcription'] ? 'failed' : tStatus}
+                  active={
+                    !stageErrors['transcription'] && tStatus === 'complete'
+                  }
                   isStale={!stageErrors['transcription'] && tStatus === 'stale'}
                   action={
                     tStatus === 'processing' || tStatus === 'queued' ? (
@@ -541,33 +795,58 @@ function ContentDetailInner() {
                         <div className="w-1.5 h-1.5 rounded-full bg-white/40 animate-pulse" />
                         Running...
                       </div>
-                    ) : tStatus === 'not_started' || tStatus === 'failed' || stageErrors['transcription'] ? (
-                      <button 
+                    ) : tStatus === 'not_started' ||
+                      tStatus === 'failed' ||
+                      stageErrors['transcription'] ? (
+                      <button
                         onClick={() => {
-                          setStageErrors(prev => { const c = { ...prev }; delete c['transcription']; return c; });
+                          setStageErrors((prev) => {
+                            const c = {...prev};
+                            delete c['transcription'];
+                            return c;
+                          });
                           handleTranscribe(false);
-                        }} 
-                        disabled={executingStage === 'transcription' || !content.mediaPlayable || isPipelineActive}
-                        className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
-                      >
-                        {executingStage === 'transcription' && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
-                        {tStatus === 'failed' || stageErrors['transcription'] ? 'Retry Transcribe' : 'Run Transcribe'}
+                        }}
+                        disabled={
+                          executingStage === 'transcription' ||
+                          !content.mediaPlayable ||
+                          isPipelineActive
+                        }
+                        className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2">
+                        {executingStage === 'transcription' && (
+                          <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                        )}
+                        {tStatus === 'failed' || stageErrors['transcription']
+                          ? 'Retry Transcribe'
+                          : 'Run Transcribe'}
                       </button>
                     ) : (
                       <div className="flex items-center gap-2 ml-4">
-                        <Link 
-                          href={`/content/${canonicalContentId}/transcript?view=raw`} 
-                          className="text-xs font-bold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
-                        >
+                        <Link
+                          href={`/content/${canonicalContentId}/transcript?view=raw`}
+                          className="text-xs font-bold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all flex items-center gap-2 group">
                           View Transcript
-                          <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                          <svg
+                            className="w-3 h-3 transition-transform group-hover:translate-x-0.5"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M9 5l7 7-7 7"
+                            />
+                          </svg>
                         </Link>
                         <button
                           onClick={() => handleTranscribe(true)}
-                          disabled={executingStage === 'transcription' || isPipelineActive}
+                          disabled={
+                            executingStage === 'transcription' ||
+                            isPipelineActive
+                          }
                           title="Re-running Transcribe invalidates all downstream stages as STALE"
-                          className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30"
-                        >
+                          className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30">
                           Re-run
                         </button>
                       </div>
@@ -577,19 +856,28 @@ function ContentDetailInner() {
                 {stageErrors['transcription'] && (
                   <div className="mt-2 ml-5 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-300 flex items-center justify-between">
                     <div>
-                      <div className="font-semibold text-red-400">Unable to start transcription.</div>
-                      <div className="text-white/60 text-[11px] mt-0.5">{stageErrors['transcription'].message}</div>
+                      <div className="font-semibold text-red-400">
+                        Unable to start transcription.
+                      </div>
+                      <div className="text-white/60 text-[11px] mt-0.5">
+                        {stageErrors['transcription'].message}
+                      </div>
                       {stageErrors['transcription'].requestId && (
-                        <div className="text-white/40 text-[10px] font-mono mt-0.5">Request ID: {stageErrors['transcription'].requestId}</div>
+                        <div className="text-white/40 text-[10px] font-mono mt-0.5">
+                          Request ID: {stageErrors['transcription'].requestId}
+                        </div>
                       )}
                     </div>
                     <button
                       onClick={() => {
-                        setStageErrors(prev => { const c = { ...prev }; delete c['transcription']; return c; });
+                        setStageErrors((prev) => {
+                          const c = {...prev};
+                          delete c['transcription'];
+                          return c;
+                        });
                         handleTranscribe(tStatus === 'complete');
                       }}
-                      className="ml-3 px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-medium text-xs whitespace-nowrap cursor-pointer transition-colors"
-                    >
+                      className="ml-3 px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white font-medium text-xs whitespace-nowrap cursor-pointer transition-colors">
                       Retry
                     </button>
                   </div>
@@ -597,17 +885,23 @@ function ContentDetailInner() {
               </div>
 
               {/* 3. Transcript Correction / Normalization Layer */}
-              <TimelineItem 
+              <TimelineItem
                 number="3"
-                label="Transcript Correction" 
-                status={cStatus} 
+                label="Transcript Correction"
+                status={cStatus}
                 active={cStatus === 'complete'}
                 isStale={cStatus === 'stale'}
                 action={
                   cStatus === 'processing' || cStatus === 'queued' ? (
                     (() => {
-                      const cElapsed = getElapsedSeconds(content.transcriptCorrection?.startedAt || content.processing?.transcriptCorrectionStartedAt);
-                      const isBatchKnown = content.processing?.batchProgress?.stage === 'transcript_correction' && content.processing?.batchProgress?.current;
+                      const cElapsed = getElapsedSeconds(
+                        content.transcriptCorrection?.startedAt ||
+                          content.processing?.transcriptCorrectionStartedAt,
+                      );
+                      const isBatchKnown =
+                        content.processing?.batchProgress?.stage ===
+                          'transcript_correction' &&
+                        content.processing?.batchProgress?.current;
                       return (
                         <div className="ml-4 text-xs font-mono text-[#F5B800] flex items-center gap-2">
                           <div className="w-1.5 h-1.5 rounded-full bg-[#F5B800] animate-pulse" />
@@ -615,48 +909,86 @@ function ContentDetailInner() {
                             'Queued...'
                           ) : isBatchKnown ? (
                             <span>
-                              Batch {content.processing?.batchProgress?.current} / {content.processing?.batchProgress?.total}
-                              {cElapsed !== null && <span className="text-white/40 ml-1.5">({cElapsed}s)</span>}
+                              Batch {content.processing?.batchProgress?.current}{' '}
+                              / {content.processing?.batchProgress?.total}
+                              {cElapsed !== null && (
+                                <span className="text-white/40 ml-1.5">
+                                  ({cElapsed}s)
+                                </span>
+                              )}
                             </span>
                           ) : (
                             <span>
                               Processing
-                              {cElapsed !== null && <span className="text-white/40 ml-1.5">({cElapsed}s)</span>}
+                              {cElapsed !== null && (
+                                <span className="text-white/40 ml-1.5">
+                                  ({cElapsed}s)
+                                </span>
+                              )}
                             </span>
                           )}
                         </div>
                       );
                     })()
                   ) : cStatus === 'not_started' || cStatus === 'failed' ? (
-                    <button 
-                      onClick={() => handleCorrection(false)} 
-                      disabled={executingStage === 'correction' || tStatus !== 'complete' || isPipelineActive}
-                      title={tStatus !== 'complete' ? "Requires completed transcription" : ""}
-                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
-                    >
-                      {executingStage === 'correction' && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
-                      {cStatus === 'failed' ? 'Retry Correction' : 'Run Correction'}
+                    <button
+                      onClick={() => handleCorrection(false)}
+                      disabled={
+                        executingStage === 'correction' ||
+                        tStatus !== 'complete' ||
+                        isPipelineActive
+                      }
+                      title={
+                        tStatus !== 'complete'
+                          ? 'Requires completed transcription'
+                          : ''
+                      }
+                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2">
+                      {executingStage === 'correction' && (
+                        <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      )}
+                      {cStatus === 'failed'
+                        ? 'Retry Correction'
+                        : 'Run Correction'}
                     </button>
                   ) : (
                     <div className="flex items-center gap-2 ml-4">
-                      {content.transcriptCorrection?.transcriptCorrectionDurationMs && (
-                        <span className="text-[11px] font-mono text-white/40 mr-1" title="Correction Duration">
-                          {(content.transcriptCorrection.transcriptCorrectionDurationMs / 1000).toFixed(1)}s
+                      {content.transcriptCorrection
+                        ?.transcriptCorrectionDurationMs && (
+                        <span
+                          className="text-[11px] font-mono text-white/40 mr-1"
+                          title="Correction Duration">
+                          {(
+                            content.transcriptCorrection
+                              .transcriptCorrectionDurationMs / 1000
+                          ).toFixed(1)}
+                          s
                         </span>
                       )}
-                      <Link 
-                        href={`/content/${canonicalContentId}/transcript?view=corrected`} 
-                        className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
-                      >
+                      <Link
+                        href={`/content/${canonicalContentId}/transcript?view=corrected`}
+                        className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group">
                         View Corrected Transcript
-                        <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        <svg
+                          className="w-3 h-3 transition-transform group-hover:translate-x-0.5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 5l7 7-7 7"
+                          />
+                        </svg>
                       </Link>
                       <button
                         onClick={() => handleCorrection(true)}
-                        disabled={executingStage === 'correction' || isPipelineActive}
+                        disabled={
+                          executingStage === 'correction' || isPipelineActive
+                        }
                         title="Re-running correction invalidates downstream segments and knowledge as STALE"
-                        className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30"
-                      >
+                        className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30">
                         Re-run
                       </button>
                     </div>
@@ -665,9 +997,9 @@ function ContentDetailInner() {
               />
 
               {/* 4. Scene Boundary Detection */}
-              <TimelineItem 
+              <TimelineItem
                 number="4"
-                label="Scene / Segment Detection" 
+                label="Scene / Segment Detection"
                 status={sStatus}
                 active={sStatus === 'complete'}
                 isStale={sStatus === 'stale'}
@@ -678,29 +1010,47 @@ function ContentDetailInner() {
                       Running...
                     </div>
                   ) : sStatus === 'not_started' || sStatus === 'failed' ? (
-                    <button 
-                      onClick={() => handleSegmentation(false)} 
-                      disabled={executingStage === 'segmentation' || tStatus !== 'complete' || isPipelineActive}
-                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
-                    >
-                      {executingStage === 'segmentation' && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
-                      {sStatus === 'failed' ? 'Retry Detection' : 'Run Detection'}
+                    <button
+                      onClick={() => handleSegmentation(false)}
+                      disabled={
+                        executingStage === 'segmentation' ||
+                        tStatus !== 'complete' ||
+                        isPipelineActive
+                      }
+                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2">
+                      {executingStage === 'segmentation' && (
+                        <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      )}
+                      {sStatus === 'failed'
+                        ? 'Retry Detection'
+                        : 'Run Detection'}
                     </button>
                   ) : (
                     <div className="flex items-center gap-2 ml-4">
-                      <Link 
-                        href={`/content/${canonicalContentId}/segments`} 
-                        className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
-                      >
+                      <Link
+                        href={`/content/${canonicalContentId}/segments`}
+                        className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group">
                         View Segments
-                        <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        <svg
+                          className="w-3 h-3 transition-transform group-hover:translate-x-0.5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 5l7 7-7 7"
+                          />
+                        </svg>
                       </Link>
                       <button
                         onClick={() => handleSegmentation(true)}
-                        disabled={executingStage === 'segmentation' || isPipelineActive}
+                        disabled={
+                          executingStage === 'segmentation' || isPipelineActive
+                        }
                         title="Re-running segmentation invalidates downstream knowledge and intelligence as STALE"
-                        className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30"
-                      >
+                        className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30">
                         Re-run
                       </button>
                     </div>
@@ -709,9 +1059,9 @@ function ContentDetailInner() {
               />
 
               {/* 5. Knowledge Graph Extraction */}
-              <TimelineItem 
+              <TimelineItem
                 number="5"
-                label="Knowledge Graph Extraction" 
+                label="Knowledge Graph Extraction"
                 status={kStatus}
                 active={kStatus === 'complete'}
                 isStale={kStatus === 'stale'}
@@ -722,30 +1072,52 @@ function ContentDetailInner() {
                       Running...
                     </div>
                   ) : kStatus === 'not_started' || kStatus === 'failed' ? (
-                    <button 
-                      onClick={() => handleKnowledge(false)} 
-                      disabled={executingStage === 'knowledge' || sStatus !== 'complete' || isPipelineActive}
-                      title={sStatus !== 'complete' ? "Requires completed scene detection" : ""}
-                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
-                    >
-                      {executingStage === 'knowledge' && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
-                      {kStatus === 'failed' ? 'Retry Knowledge' : 'Extract Knowledge'}
+                    <button
+                      onClick={() => handleKnowledge(false)}
+                      disabled={
+                        executingStage === 'knowledge' ||
+                        sStatus !== 'complete' ||
+                        isPipelineActive
+                      }
+                      title={
+                        sStatus !== 'complete'
+                          ? 'Requires completed scene detection'
+                          : ''
+                      }
+                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2">
+                      {executingStage === 'knowledge' && (
+                        <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      )}
+                      {kStatus === 'failed'
+                        ? 'Retry Knowledge'
+                        : 'Extract Knowledge'}
                     </button>
                   ) : (
                     <div className="flex items-center gap-2 ml-4">
-                      <Link 
-                        href={`/content/${canonicalContentId}/knowledge`} 
-                        className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
-                      >
+                      <Link
+                        href={`/content/${canonicalContentId}/knowledge`}
+                        className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group">
                         View Knowledge
-                        <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        <svg
+                          className="w-3 h-3 transition-transform group-hover:translate-x-0.5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 5l7 7-7 7"
+                          />
+                        </svg>
                       </Link>
                       <button
                         onClick={() => handleKnowledge(true)}
-                        disabled={executingStage === 'knowledge' || isPipelineActive}
+                        disabled={
+                          executingStage === 'knowledge' || isPipelineActive
+                        }
                         title="Re-running knowledge extraction invalidates content intelligence as STALE"
-                        className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30"
-                      >
+                        className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2 py-1.5 rounded transition-all disabled:opacity-30">
                         Re-run
                       </button>
                     </div>
@@ -754,10 +1126,10 @@ function ContentDetailInner() {
               />
 
               {/* 6. Content Intelligence Package Compilation */}
-              <TimelineItem 
+              <TimelineItem
                 number="6"
-                label="Content Intelligence" 
-                status={iStatus} 
+                label="Content Intelligence"
+                status={iStatus}
                 active={iStatus === 'complete'}
                 isStale={iStatus === 'stale'}
                 action={
@@ -767,60 +1139,91 @@ function ContentDetailInner() {
                       Compiling...
                     </div>
                   ) : iStatus === 'not_started' || iStatus === 'failed' ? (
-                    <button 
-                      onClick={() => handleIntelligence(false)} 
-                      disabled={executingStage === 'intelligence' || kStatus !== 'complete' || isPipelineActive}
-                      title={kStatus !== 'complete' ? "Requires completed knowledge extraction" : ""}
-                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2"
-                    >
-                      {executingStage === 'intelligence' && <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />}
-                      {iStatus === 'failed' ? 'Retry Compilation' : 'Compile Intelligence'}
+                    <button
+                      onClick={() => handleIntelligence(false)}
+                      disabled={
+                        executingStage === 'intelligence' ||
+                        kStatus !== 'complete' ||
+                        isPipelineActive
+                      }
+                      title={
+                        kStatus !== 'complete'
+                          ? 'Requires completed knowledge extraction'
+                          : ''
+                      }
+                      className="ml-4 text-xs font-semibold tracking-wide bg-white/10 hover:bg-white/20 border border-white/10 text-white px-3 py-1.5 rounded transition-all disabled:opacity-30 flex items-center gap-2">
+                      {executingStage === 'intelligence' && (
+                        <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      )}
+                      {iStatus === 'failed'
+                        ? 'Retry Compilation'
+                        : 'Compile Intelligence'}
                     </button>
                   ) : (
                     <div className="flex items-center gap-2 ml-4">
-                      <Link 
-                        href={`/content/${canonicalContentId}/intelligence`} 
-                        className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group"
-                      >
+                      <Link
+                        href={`/content/${canonicalContentId}/intelligence`}
+                        className="text-xs font-bold tracking-wide bg-[#F5B800]/10 hover:bg-[#F5B800]/20 border border-[#F5B800]/20 text-[#F5B800] px-3 py-1.5 rounded transition-all flex items-center gap-2 group">
                         View Intelligence
-                        <svg className="w-3 h-3 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        <svg
+                          className="w-3 h-3 transition-transform group-hover:translate-x-0.5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 5l7 7-7 7"
+                          />
+                        </svg>
                       </Link>
                       <button
                         onClick={() => handleIntelligence(true)}
-                        disabled={executingStage === 'intelligence' || isPipelineActive}
+                        disabled={
+                          executingStage === 'intelligence' || isPipelineActive
+                        }
                         title="Recompile to new immutable version. Does not invalidate earlier stages."
-                        className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2.5 py-1.5 rounded transition-all disabled:opacity-30"
-                      >
+                        className="text-[10px] uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-2.5 py-1.5 rounded transition-all disabled:opacity-30">
                         Recompile
                       </button>
                     </div>
                   )
                 }
               />
-              
+
               <div className="pt-4 border-t border-white/5">
-                <TimelineItem 
-                  label="Final System State (AI Ready)" 
-                  status={content.aiReady ? "Armed" : "Offline"} 
-                  active={content.aiReady} 
-                  isAccent 
+                <TimelineItem
+                  label="Final System State (AI Ready)"
+                  status={content.aiReady ? 'Armed' : 'Offline'}
+                  active={content.aiReady}
+                  isAccent
                   action={
                     content.aiReady ? (
                       <button
                         onClick={handleDeactivateAi}
-                        disabled={executingStage === "deactivate"}
-                        className="text-xs uppercase tracking-wider font-semibold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-lg transition-all"
-                      >
-                        {executingStage === "deactivate" ? "Deactivating..." : "Deactivate"}
+                        disabled={executingStage === 'deactivate'}
+                        className="text-xs uppercase tracking-wider font-semibold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-lg transition-all">
+                        {executingStage === 'deactivate'
+                          ? 'Deactivating...'
+                          : 'Deactivate'}
                       </button>
                     ) : (
                       <button
                         onClick={handleActivateAi}
-                        disabled={executingStage === "activate" || !content.intelligence?.latestVersion}
-                        title={!content.intelligence?.latestVersion ? "Requires completed intelligence package" : "Activate generic Temporal RAG runtime"}
-                        className="text-xs uppercase tracking-wider font-semibold bg-[#F5B800] hover:bg-[#F5B800]/90 text-black px-3 py-1.5 rounded-lg font-bold transition-all shadow-md shadow-[#F5B800]/20 disabled:opacity-40"
-                      >
-                        {executingStage === "activate" ? "Activating..." : "Activate AI"}
+                        disabled={
+                          executingStage === 'activate' ||
+                          !content.intelligence?.latestVersion
+                        }
+                        title={
+                          !content.intelligence?.latestVersion
+                            ? 'Requires completed intelligence package'
+                            : 'Activate generic Temporal RAG runtime'
+                        }
+                        className="text-xs uppercase tracking-wider font-semibold bg-[#F5B800] hover:bg-[#F5B800]/90 text-black px-3 py-1.5 rounded-lg font-bold transition-all shadow-md shadow-[#F5B800]/20 disabled:opacity-40">
+                        {executingStage === 'activate'
+                          ? 'Activating...'
+                          : 'Activate AI'}
                       </button>
                     )
                   }
@@ -837,60 +1240,67 @@ function ContentDetailInner() {
           <div className="bg-[#121214] border border-white/10 rounded-2xl max-w-xl w-full p-6 space-y-6 shadow-2xl relative">
             <div className="flex items-start justify-between">
               <div>
-                <h3 className="text-lg font-medium text-white/90">Reprocess AI Pipeline?</h3>
+                <h3 className="text-lg font-medium text-white/90">
+                  Reprocess AI Pipeline?
+                </h3>
                 <p className="text-xs text-white/50 mt-1">
-                  This will regenerate downstream AI artifacts for this title. Media file is preserved.
+                  This will regenerate downstream AI artifacts for this title.
+                  Media file is preserved.
                 </p>
               </div>
-              <button 
+              <button
                 onClick={() => setShowReprocessModal(false)}
-                className="text-white/40 hover:text-white transition-colors"
-              >
+                className="text-white/40 hover:text-white transition-colors">
                 ✕
               </button>
             </div>
 
             <div className="space-y-3">
               {/* Option A (Recommended) */}
-              <label 
+              <label
                 onClick={() => setReprocessStartFrom('transcript_correction')}
                 className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
-                  reprocessStartFrom === 'transcript_correction' 
-                    ? 'border-[#F5B800]/50 bg-[#F5B800]/5 text-white' 
+                  reprocessStartFrom === 'transcript_correction'
+                    ? 'border-[#F5B800]/50 bg-[#F5B800]/5 text-white'
                     : 'border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20'
-                }`}
-              >
-                <input 
-                  type="radio" 
-                  name="startFrom" 
-                  checked={reprocessStartFrom === 'transcript_correction'} 
-                  onChange={() => setReprocessStartFrom('transcript_correction')}
+                }`}>
+                <input
+                  type="radio"
+                  name="startFrom"
+                  checked={reprocessStartFrom === 'transcript_correction'}
+                  onChange={() =>
+                    setReprocessStartFrom('transcript_correction')
+                  }
                   className="mt-1 accent-[#F5B800]"
                 />
                 <div className="space-y-1">
                   <div className="text-xs font-semibold text-white flex items-center gap-2">
                     Reprocess from Transcript Correction
-                    <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-[#F5B800]/20 text-[#F5B800]">Recommended</span>
+                    <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-[#F5B800]/20 text-[#F5B800]">
+                      Recommended
+                    </span>
                   </div>
                   <div className="text-[11px] text-white/60">
-                    Preserves existing Amazon Transcribe output. Regenerates Corrected Transcript, Scene Detection, Knowledge Extraction, and Content Intelligence. Saves AWS transcription time & cost.
+                    Preserves existing Amazon Transcribe output. Regenerates
+                    Corrected Transcript, Scene Detection, Knowledge Extraction,
+                    and Content Intelligence. Saves AWS transcription time &
+                    cost.
                   </div>
                 </div>
               </label>
 
               {/* Option B */}
-              <label 
+              <label
                 onClick={() => setReprocessStartFrom('transcription')}
                 className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
-                  reprocessStartFrom === 'transcription' 
-                    ? 'border-[#F5B800]/50 bg-[#F5B800]/5 text-white' 
+                  reprocessStartFrom === 'transcription'
+                    ? 'border-[#F5B800]/50 bg-[#F5B800]/5 text-white'
                     : 'border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20'
-                }`}
-              >
-                <input 
-                  type="radio" 
-                  name="startFrom" 
-                  checked={reprocessStartFrom === 'transcription'} 
+                }`}>
+                <input
+                  type="radio"
+                  name="startFrom"
+                  checked={reprocessStartFrom === 'transcription'}
                   onChange={() => setReprocessStartFrom('transcription')}
                   className="mt-1 accent-[#F5B800]"
                 />
@@ -899,15 +1309,24 @@ function ContentDetailInner() {
                     Reprocess Everything
                   </div>
                   <div className="text-[11px] text-white/60">
-                    Reruns Amazon Transcribe and all downstream AI stages from scratch. Use this only if the raw audio transcription itself needs regeneration.
+                    Reruns Amazon Transcribe and all downstream AI stages from
+                    scratch. Use this only if the raw audio transcription itself
+                    needs regeneration.
                   </div>
                 </div>
               </label>
             </div>
 
             <div className="p-3 rounded-lg bg-white/[0.02] border border-white/5 text-[11px] text-white/50 space-y-1">
-              <div>• Existing historical intelligence versions will remain preserved.</div>
-              <div>• This title will remain <strong className="text-white/70">AI Ready = False</strong> until verified in v0.16.</div>
+              <div>
+                • Existing historical intelligence versions will remain
+                preserved.
+              </div>
+              <div>
+                • This title will remain{' '}
+                <strong className="text-white/70">AI Ready = False</strong>{' '}
+                until verified in v0.16.
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -915,23 +1334,46 @@ function ContentDetailInner() {
                 type="button"
                 onClick={() => setShowReprocessModal(false)}
                 disabled={reprocessLoading}
-                className="text-xs font-semibold px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 transition-colors"
-              >
+                className="text-xs font-semibold px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 transition-colors">
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => handleReprocessPipeline(reprocessStartFrom)}
                 disabled={reprocessLoading}
-                className="text-xs font-semibold px-5 py-2 rounded-lg bg-[#F5B800] hover:bg-amber-400 text-black flex items-center gap-2 transition-all shadow-lg shadow-amber-500/20"
-              >
-                {reprocessLoading && <div className="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />}
+                className="text-xs font-semibold px-5 py-2 rounded-lg bg-[#F5B800] hover:bg-amber-400 text-black flex items-center gap-2 transition-all shadow-lg shadow-amber-500/20">
+                {reprocessLoading && (
+                  <div className="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                )}
                 {reprocessLoading ? 'Dispatching...' : 'Start Reprocess'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Edit Content Modal */}
+      <EditContentModal
+        content={content}
+        isOpen={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        onSaved={(updated) => {
+          setContent((prev: any) => ({ ...prev, ...updated }));
+          setShowEditModal(false);
+          fetchDetail();
+        }}
+      />
+
+      {/* Delete Content Modal */}
+      <DeleteContentModal
+        content={content}
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        onDeleted={() => {
+          setShowDeleteModal(false);
+          router.push("/");
+        }}
+      />
     </div>
   );
 }

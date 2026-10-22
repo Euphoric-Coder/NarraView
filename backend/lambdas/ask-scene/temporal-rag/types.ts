@@ -121,6 +121,7 @@ export interface ResumeContext {
   lastWatchedAt?: string;
   timeAwaySeconds?: number;
   returnType?: string;
+  accessibility?: AccessibilityMetadata;
 }
 
 export interface TemporalRagRequest {
@@ -134,6 +135,7 @@ export interface TemporalRagRequest {
   viewerId?: string;
   watchedIntervals?: Array<{ start: number; end: number }>;
   resumeContext?: ResumeContext;
+  accessibilityProfile?: Partial<ViewerAccessibilityProfile>;
 }
 
 export interface TemporalRagResponse {
@@ -166,4 +168,52 @@ export interface TemporalRagResponse {
   personalized?: boolean;
   watchedCoverageUsed?: boolean;
   returnType?: string;
+}
+
+// ============================================================================
+// v0.19 ACCESSIBILITY INTELLIGENCE & ADAPTIVE EXPLANATION
+// ============================================================================
+
+export type ExplanationStyle = "standard" | "simple" | "very_simple";
+export type Verbosity = "brief" | "normal" | "detailed";
+
+export interface ViewerAccessibilityProfile {
+  viewerId: string;
+  explanationStyle: ExplanationStyle;
+  verbosity: Verbosity;
+  jargonSupport: boolean;
+  entityReminders: boolean;
+  conceptReminders: boolean;
+  stepByStep: boolean;
+  reducedCognitiveLoad: boolean;
+  autoExplainComplexTerms: boolean;
+  updatedAt?: string;
+}
+
+export const DEFAULT_ACCESSIBILITY_PROFILE: Omit<ViewerAccessibilityProfile, "viewerId" | "updatedAt"> = {
+  explanationStyle: "standard",
+  verbosity: "normal",
+  jargonSupport: true,
+  entityReminders: true,
+  conceptReminders: true,
+  stepByStep: false,
+  reducedCognitiveLoad: false,
+  autoExplainComplexTerms: false,
+};
+
+export interface JargonDefinition {
+  term: string;
+  definition: string;
+}
+
+export interface AccessibilityMetadata {
+  accessibilityApplied: boolean;
+  explanationStyle: ExplanationStyle;
+  verbosity: Verbosity;
+  jargonSupport: boolean;
+  jargonDefinitions?: JargonDefinition[];
+  entityReminderUsed?: boolean;
+  conceptReminderUsed?: boolean;
+  stepByStepUsed?: boolean;
+  reducedCognitiveLoadUsed?: boolean;
 }

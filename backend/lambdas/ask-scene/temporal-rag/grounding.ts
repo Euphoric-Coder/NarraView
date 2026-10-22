@@ -1,4 +1,5 @@
 import { GroundingCheckResult, RetrievalDocument, TemporalMode } from "./types";
+import { validateSemanticPreservation } from "./accessibility";
 
 /**
  * Validates proposition-level grounding of model output against retrieved safe evidence.
@@ -171,6 +172,22 @@ export function validateGrounding(
       valid: false,
       violations: ["NO_EVIDENCE_FOR_FACTUAL_CLAIM"],
       safeFallback: "That isn't established in what you have seen so far."
+    };
+  }
+
+  // v0.19 Semantic Consistency & Preservation Guardrails (Req 38-40)
+  const semanticCheck = validateSemanticPreservation(evidenceCorpus, textToCheck);
+  console.log('[VIEWER_TELEMETRY] ACCESSIBILITY_GROUNDING_VALIDATED', {
+    valid: semanticCheck.valid,
+    violations: semanticCheck.violations,
+    mode
+  });
+
+  if (!semanticCheck.valid) {
+    return {
+      valid: false,
+      violations: semanticCheck.violations,
+      safeFallback: "The current context does not establish further details."
     };
   }
 

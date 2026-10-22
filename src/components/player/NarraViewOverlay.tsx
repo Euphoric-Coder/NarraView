@@ -5,6 +5,8 @@ import { TVFocusGuideView } from 'react-native';
 import { FocusableButton } from '../FocusableButton';
 import { spacing } from '../../theme/spacing';
 import { askNarraView } from '../../services/narraViewApi';
+import { AccessibilitySettingsModal } from '../AccessibilitySettingsModal';
+import { getCachedAccessibilityProfile } from '../../services/accessibilityApi';
 
 interface NarraViewOverlayProps {
   onClose: () => void;
@@ -27,9 +29,10 @@ interface Action {
 }
 
 const QUICK_ACTIONS: Action[] = [
-  { id: 'action-1', label: 'What happened?', mode: 'ask', query: 'What just happened in this scene?' },
-  { id: 'action-2', label: 'Why does it matter?', mode: 'ask', query: 'Why is this moment important to the story?' },
-  { id: 'action-3', label: "Who's involved?", mode: 'ask', query: 'Who are the characters involved here?' },
+  { id: "action-scene", label: "Ask about this scene", mode: "ask", query: "What is happening in this scene right now?" },
+  { id: "action-recap", label: "Previously On", mode: "recap", query: "Recap what has happened so far." },
+  { id: "action-explain", label: "Explain Simply", mode: "explain_simple", query: "Explain this concept simply." },
+  { id: "action-learn", label: "Learn Mode", mode: "learn", query: "Test my understanding of what was revealed." },
 ];
 
 const QuestionOptionCard = ({ label, onPress, hasTVPreferredFocus, nextFocusDown }: any) => {
@@ -54,11 +57,24 @@ const QuestionOptionCard = ({ label, onPress, hasTVPreferredFocus, nextFocusDown
   );
 };
 
-const CompactOptionCard = ({ label, onPress, hasTVPreferredFocus }: any) => {
+const CompactOptionCard = React.forwardRef(({
+  label,
+  onPress,
+  hasTVPreferredFocus,
+  nextFocusLeft,
+  nextFocusRight,
+  nextFocusDown,
+  nextFocusUp,
+}: any, ref: any) => {
   const [isFocused, setIsFocused] = useState(false);
   return (
     <Pressable
+      ref={ref}
       hasTVPreferredFocus={hasTVPreferredFocus}
+      nextFocusLeft={nextFocusLeft}
+      nextFocusRight={nextFocusRight}
+      nextFocusDown={nextFocusDown}
+      nextFocusUp={nextFocusUp}
       onFocus={() => setIsFocused(true)}
       onBlur={() => setIsFocused(false)}
       onPress={onPress}
@@ -68,12 +84,15 @@ const CompactOptionCard = ({ label, onPress, hasTVPreferredFocus }: any) => {
         pressed && styles.quickActionBtnPressed
       ]}
     >
-      <Text style={[styles.compactActionLabel, isFocused && styles.quickActionLabelFocused]}>
+      <Text
+        numberOfLines={2}
+        style={[styles.compactActionLabel, isFocused && styles.quickActionLabelFocused]}
+      >
         {label}
       </Text>
     </Pressable>
   );
-};
+});
 
 export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, currentScene, runtimeProvider, viewerId }: NarraViewOverlayProps) => {
   const [fadeAnim] = useState(new Animated.Value(0));
@@ -98,10 +117,34 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
   const [pendingMode, setPendingMode] = useState<NarraViewMode>('ask');
   const [learnFeedback, setLearnFeedback] = useState<string | null>(null);
   const [isAnswerFocused, setIsAnswerFocused] = useState<boolean>(false);
+  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
+  const recapBtnRef = useRef<any>(null);
+  const explainBtnRef = useRef<any>(null);
+  const learnBtnRef = useRef<any>(null);
+  const settingsBtnRef = useRef<any>(null);
   const backBtnRef = useRef<any>(null);
-  const [backBtnNode, setBackBtnNode] = useState<number | null>(null);
+  const closeBtnRef = useRef<any>(null);
+
+  const [recapNode, setRecapNode] = useState<number | null>(null);
+  const [explainNode, setExplainNode] = useState<number | null>(null);
+  const [learnNode, setLearnNode] = useState<number | null>(null);
+  const [settingsNode, setSettingsNode] = useState<number | null>(null);
+  const [backNode, setBackNode] = useState<number | null>(null);
+  const [closeNode, setCloseNode] = useState<number | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (recapBtnRef.current) setRecapNode(findNodeHandle(recapBtnRef.current));
+      if (explainBtnRef.current) setExplainNode(findNodeHandle(explainBtnRef.current));
+      if (learnBtnRef.current) setLearnNode(findNodeHandle(learnBtnRef.current));
+      if (settingsBtnRef.current) setSettingsNode(findNodeHandle(settingsBtnRef.current));
+      if (backBtnRef.current) setBackNode(findNodeHandle(backBtnRef.current));
+      if (closeBtnRef.current) setCloseNode(findNodeHandle(closeBtnRef.current));
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [overlayState]);
   
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -189,7 +232,8 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
         question: query,
         requestId: reqIdStr,
         scene: currentScene,
-        viewerId
+        viewerId,
+        accessibilityProfile: getCachedAccessibilityProfile() || undefined
       });
       
       // Stale request guard: discard response if request became stale
@@ -217,12 +261,7 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
     }
   };
 
-  const getLoadingText = () => {
-    if (pendingMode === 'recap') return "Recapping what you've seen...";
-    if (pendingMode === 'explain_simple') return "Simplifying this moment...";
-    if (pendingMode === 'learn') return "Building a quick question...";
-    return "Understanding this moment...";
-  };
+  const getLoadingText = () => "NarraView is checking what has been revealed so far…";
 
   const cleanFeedbackText = (text: string) => {
     if (!text) return '';
@@ -249,6 +288,7 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
         <View style={styles.header}>
           <View style={styles.headerTopRow}>
             <Text style={styles.brandEyebrow}>NARRAVIEW</Text>
+            <Text style={styles.headerTagline}>Answers only from what you've seen</Text>
           </View>
           <View style={styles.headerBottomRow}>
             <Text style={styles.sceneTitle} numberOfLines={1}>
@@ -290,7 +330,7 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
                         setCustomQuestion('');
                         setOverlayState('custom-input');
                       }}
-                      nextFocusDown={backBtnNode || undefined}
+                      nextFocusDown={recapNode || backNode || undefined}
                     />
                   </View>
                 </View>
@@ -328,7 +368,7 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
                         setOverlayState('idle');
                       }}
                       style={styles.actionBtn}
-                      nextFocusDown={backBtnNode || undefined}
+                      nextFocusDown={backNode || undefined}
                     />
                   </View>
                 </View>
@@ -360,20 +400,94 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
                     </View>
                   )}
                   
+                  {/* v0.19 Structured Accessible Response Metadata (Req 32) */}
+                  {currentResponse.accessibility && (
+                    <View style={styles.accessibilityBadgeRow}>
+                      {currentResponse.accessibility.explanationStyle !== 'standard' && (
+                        <View style={styles.accessibilityPill}>
+                          <Text style={styles.accessibilityPillText}>
+                            {currentResponse.accessibility.explanationStyle === 'very_simple' ? 'VERY SIMPLE' : 'SIMPLE MODE'}
+                          </Text>
+                        </View>
+                      )}
+                      {currentResponse.accessibility.reducedCognitiveLoadUsed && (
+                        <View style={[styles.accessibilityPill, { borderColor: '#818cf8' }]}>
+                          <Text style={[styles.accessibilityPillText, { color: '#818cf8' }]}>REDUCED LOAD</Text>
+                        </View>
+                      )}
+                      {currentResponse.accessibility.stepByStepUsed && (
+                        <View style={[styles.accessibilityPill, { borderColor: '#34d399' }]}>
+                          <Text style={[styles.accessibilityPillText, { color: '#34d399' }]}>STEP-BY-STEP</Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
+
                   <View style={styles.answerDivider} />
+
+                  {/* v0.19 Jargon Definitions Box (Req 11) */}
+                  {currentResponse.accessibility?.jargonDefinitions && currentResponse.accessibility.jargonDefinitions.length > 0 && (
+                    <View style={styles.jargonContainer}>
+                      <Text style={styles.jargonHeading}>REVEALED TERMS & DEFINITIONS</Text>
+                      {currentResponse.accessibility.jargonDefinitions.map((item: any, idx: number) => (
+                        <View key={idx} style={styles.jargonRow}>
+                          <Text style={styles.jargonTermText}>{item.term}</Text>
+                          <Text style={styles.jargonDefText}>— {item.definition}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
                   
+                  {/* SpoilerShield Identity Badge */}
+                  <View style={styles.spoilerShieldCard}>
+                    <Text style={styles.spoilerShieldIcon}>🛡</Text>
+                    <View style={styles.spoilerShieldCol}>
+                      <Text style={styles.spoilerShieldTitle}>SpoilerShield</Text>
+                      <Text style={styles.spoilerShieldSafeText}>
+                        Safe through {Math.floor(Math.max(0, currentTimeSeconds) / 60).toString().padStart(2, '0')}:{Math.floor(Math.max(0, currentTimeSeconds) % 60).toString().padStart(2, '0')}
+                      </Text>
+                    </View>
+                  </View>
+
                   {currentResponse.mode === 'ask' || !currentResponse.mode ? (
-                    <Pressable 
-                      hasTVPreferredFocus
-                      onFocus={() => setIsAnswerFocused(true)}
-                      onBlur={() => setIsAnswerFocused(false)}
-                      style={() => [
-                        styles.answerBlock,
-                        isAnswerFocused && styles.answerBlockFocused
-                      ]}
-                    >
-                      <Text style={styles.answerText}>{currentResponse.answer}</Text>
-                    </Pressable>
+                    (() => {
+                      const ans = currentResponse.answer || '';
+                      const isRefusal = ans.toLowerCase().includes("isn’t established") ||
+                                        ans.toLowerCase().includes("not established") ||
+                                        ans.toLowerCase().includes("won't reveal") ||
+                                        ans.toLowerCase().includes("wont reveal") ||
+                                        currentResponse.safety?.premiseValidated === false;
+                      if (isRefusal) {
+                        return (
+                          <Pressable
+                            hasTVPreferredFocus
+                            onFocus={() => setIsAnswerFocused(true)}
+                            onBlur={() => setIsAnswerFocused(false)}
+                            style={() => [
+                              styles.answerBlock,
+                              styles.refusalBlock,
+                              isAnswerFocused && styles.answerBlockFocused
+                            ]}
+                          >
+                            <Text style={styles.refusalPrimaryText}>NarraView won't reveal that yet.</Text>
+                            <Text style={styles.refusalSecondaryText}>Keep watching — this becomes clear later.</Text>
+                          </Pressable>
+                        );
+                      }
+                      return (
+                        <Pressable 
+                          hasTVPreferredFocus
+                          onFocus={() => setIsAnswerFocused(true)}
+                          onBlur={() => setIsAnswerFocused(false)}
+                          style={() => [
+                            styles.answerBlock,
+                            isAnswerFocused && styles.answerBlockFocused
+                          ]}
+                        >
+                          <Text style={styles.answerText}>{currentResponse.answer}</Text>
+                        </Pressable>
+                      );
+                    })()
                   ) : (currentResponse.mode === 'recap' || currentResponse.mode === 'previously_on') ? (
                     <View style={styles.modeContentBlock}>
                       {currentResponse.summary ? (
@@ -474,42 +588,68 @@ export const NarraViewOverlay = ({ onClose, contentId, currentTimeSeconds, curre
         </View>
         
         {/* Fixed Footer */}
-        <TVFocusGuideView style={styles.footer} autoFocus>
+        <View style={styles.footer}>
           {overlayState === 'idle' && (
             <View style={styles.footerToolsRow}>
               <CompactOptionCard 
+                ref={recapBtnRef}
                 label="Previously On" 
                 onPress={() => handleQuerySelect({ id: 'action-recap', label: 'Previously On', mode: 'recap' })}
-                hasTVPreferredFocus={lastSelectedActionId === 'action-recap'}
+                nextFocusRight={explainNode || undefined}
+                nextFocusDown={backNode || undefined}
               />
               <CompactOptionCard 
+                ref={explainBtnRef}
                 label="Explain Simply" 
                 onPress={() => handleQuerySelect({ id: 'action-explain', label: 'Explain Simply', mode: 'explain_simple' })}
-                hasTVPreferredFocus={lastSelectedActionId === 'action-explain'}
+                nextFocusLeft={recapNode || undefined}
+                nextFocusRight={learnNode || undefined}
+                nextFocusDown={backNode || undefined}
               />
               <CompactOptionCard 
+                ref={learnBtnRef}
                 label="Learn Mode" 
                 onPress={() => handleQuerySelect({ id: 'action-learn', label: 'Learn Mode', mode: 'learn' })}
-                hasTVPreferredFocus={lastSelectedActionId === 'action-learn'}
+                nextFocusLeft={explainNode || undefined}
+                nextFocusRight={settingsNode || undefined}
+                nextFocusDown={closeNode || undefined}
+              />
+              <CompactOptionCard 
+                ref={settingsBtnRef}
+                label="⚙ Settings" 
+                onPress={() => setShowSettingsModal(true)}
+                nextFocusLeft={learnNode || undefined}
+                nextFocusDown={closeNode || undefined}
               />
             </View>
           )}
           <View style={styles.footerRow}>
             <FocusableButton 
+              ref={backBtnRef}
               label="Back" 
               onPress={handleBackPress} 
               style={styles.footerBtn} 
               labelStyle={styles.footerBtnLabel}
+              nextFocusUp={overlayState === 'idle' ? (recapNode || undefined) : undefined}
+              nextFocusRight={closeNode || undefined}
             />
             <FocusableButton 
+              ref={closeBtnRef}
               label="Close" 
               onPress={handleClose} 
               style={styles.footerBtn} 
               labelStyle={styles.footerBtnLabel}
+              nextFocusUp={overlayState === 'idle' ? (settingsNode || undefined) : undefined}
+              nextFocusLeft={backNode || undefined}
             />
           </View>
-        </TVFocusGuideView>
+        </View>
 
+        <AccessibilitySettingsModal
+          visible={showSettingsModal}
+          onClose={() => setShowSettingsModal(false)}
+          viewerId={viewerId || 'narraview-demo-viewer'}
+        />
       </TVFocusGuideView>
     </Animated.View>
   );
@@ -522,9 +662,142 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
     alignItems: 'flex-start',
   },
+
+  contextAssistCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 184, 0, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 184, 0, 0.25)',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  contextAssistCardPressed: {
+    backgroundColor: 'rgba(245, 184, 0, 0.18)',
+  },
+  contextAssistIcon: {
+    fontSize: 22,
+    marginRight: 12,
+  },
+  contextAssistTextCol: {
+    flex: 1,
+  },
+  contextAssistTitle: {
+    color: '#F5B800',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  contextAssistSubtitle: {
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: 11,
+  },
+  accessibilityBadgeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  accessibilityPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#F5B800',
+    backgroundColor: 'rgba(245, 184, 0, 0.08)',
+  },
+  accessibilityPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#F5B800',
+    letterSpacing: 0.5,
+  },
+  jargonContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+  },
+  jargonHeading: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.5)',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  jargonRow: {
+    marginBottom: 4,
+  },
+  jargonTermText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#F5B800',
+  },
+  jargonDefText: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.75)',
+    marginTop: 1,
+  },
+  headerTagline: {
+    color: 'rgba(255, 255, 255, 0.55)',
+    fontSize: 12,
+    letterSpacing: 0.5,
+  },
+  spoilerShieldCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 184, 0, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 184, 0, 0.3)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  spoilerShieldIcon: {
+    fontSize: 20,
+    marginRight: 10,
+  },
+  spoilerShieldCol: {
+    flex: 1,
+  },
+  spoilerShieldTitle: {
+    color: '#F5B800',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  spoilerShieldSafeText: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 11,
+    marginTop: 1,
+  },
+  refusalBlock: {
+    backgroundColor: 'rgba(245, 184, 0, 0.05)',
+    borderLeftWidth: 4,
+    borderLeftColor: '#F5B800',
+    padding: 18,
+    borderRadius: 8,
+  },
+  refusalPrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    lineHeight: 28,
+    marginBottom: 8,
+  },
+  refusalSecondaryText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 16,
+    lineHeight: 24,
+  },
   panel: {
-    width: '44%',
-    minWidth: 480,
+    width: '46%',
+    minWidth: 500,
+    maxWidth: 580,
     height: '90%',
     marginTop: '5%',
     marginLeft: '6%',
@@ -532,9 +805,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
-    paddingTop: 24,
-    paddingHorizontal: 32,
-    paddingBottom: 32,
+    paddingTop: 22,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
     flexDirection: 'column',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 12 },
@@ -545,13 +818,13 @@ const styles = StyleSheet.create({
   
   // Header
   header: {
-    marginBottom: 28,
+    marginBottom: 20,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.1)',
-    paddingBottom: 20,
+    paddingBottom: 16,
   },
   headerTopRow: {
-    marginBottom: 4,
+    marginBottom: 2,
   },
   headerBottomRow: {
     flexDirection: 'row',
@@ -560,19 +833,19 @@ const styles = StyleSheet.create({
   },
   brandEyebrow: {
     color: 'rgba(255, 255, 255, 0.5)',
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 13,
+    fontWeight: '700',
     letterSpacing: 2,
   },
   sceneTitle: {
     color: '#FFFFFF',
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '600',
     flex: 1,
   },
   timestampText: {
     color: 'rgba(255, 255, 255, 0.5)',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '500',
     marginLeft: 16,
   },
@@ -597,8 +870,8 @@ const styles = StyleSheet.create({
   },
   promptText: {
     color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 20,
-    marginBottom: 24,
+    fontSize: 18,
+    marginBottom: 16,
   },
   actionList: {
     gap: 16,
@@ -751,32 +1024,34 @@ const styles = StyleSheet.create({
   },
   
   footer: {
-    marginTop: 16,
+    marginTop: 12,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
-    paddingTop: 16,
+    paddingTop: 14,
   },
   footerToolsRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 20,
+    gap: 8,
+    marginBottom: 14,
     width: '100%',
   },
   compactActionBtn: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 12,
-    minHeight: 48,
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    paddingVertical: 10,
+    minHeight: 52,
     backgroundColor: 'rgba(20, 20, 25, 0.8)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
     borderRadius: 8,
   },
   compactActionLabel: {
-    color: 'rgba(255, 255, 255, 0.8)',
-    fontSize: 16,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 12,
     fontWeight: '600',
+    lineHeight: 16,
     textAlign: 'center',
   },
   footerRow: {
@@ -785,14 +1060,14 @@ const styles = StyleSheet.create({
   },
   footerBtn: {
     backgroundColor: 'transparent',
-    height: 48,
+    height: 44,
     paddingHorizontal: 16,
     paddingVertical: 0,
     justifyContent: 'center',
   },
   footerBtnLabel: {
     color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '500',
   },
   customInputState: {

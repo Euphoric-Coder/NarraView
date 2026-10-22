@@ -1,6 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { TranscribeClient, StartTranscriptionJobCommand } from "@aws-sdk/client-transcribe";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
@@ -12,8 +12,39 @@ const s3Client = new S3Client({});
 const transcribeClient = new TranscribeClient({});
 const lambdaClient = new LambdaClient({});
 
-const TABLE_NAME = process.env.TABLE_NAME || '';
-const BUCKET_NAME = process.env.BUCKET_NAME || '';
+const TABLE_NAME = process.env.TABLE_NAME || "";
+const BUCKET_NAME = process.env.BUCKET_NAME || "";
+const VIEWER_TABLE_NAME = process.env.VIEWER_TABLE_NAME || "";
+
+export const ALLOWED_CONTENT_CATEGORIES = [
+  "documentary",
+  "tutorial",
+  "demo",
+  "narrative",
+  "educational",
+  "other"
+] as const;
+export type ContentCategoryType = typeof ALLOWED_CONTENT_CATEGORIES[number];
+
+export const PROTECTED_DEMO_TITLES = new Set([
+  "city-care-demo",
+  "ml-systems-tutorial",
+  "signal-lost"
+]);
+
+export const ALLOWED_EDITABLE_FIELDS = [
+  "title",
+  "description",
+  "contentCategory",
+  "contentType",
+  "language",
+  "posterS3Key",
+  "posterUrl",
+  "videoS3Key",
+  "videoUrl",
+  "catalogVisible",
+  "mediaPlayable"
+] as const;
 
 export async function resolvePlaybackUrl(
   item: any,
@@ -108,6 +139,7 @@ export const handler = async (event: any) => {
         }
         return {
           ...item,
+          contentCategory: item.contentCategory || "other",
           videoUrl,
           posterUrl
         };
@@ -153,7 +185,12 @@ export const handler = async (event: any) => {
       return {
         statusCode: 200,
         headers: corsHeaders(),
-        body: JSON.stringify({ ...item, videoUrl, posterUrl })
+        body: JSON.stringify({
+          ...item,
+          contentCategory: item.contentCategory || "other",
+          videoUrl,
+          posterUrl
+        })
       };
     }
 
@@ -216,23 +253,72 @@ export const handler = async (event: any) => {
       }
     }
 
-    if (path === '/content/{contentId}/transcripts/{type}' && method === 'GET') {
-      const { contentId, type } = event.pathParameters;
-      let key = `content/${contentId}/transcripts/normalized/transcript.json`;
-      if (type === 'raw') {
-        key = `content/${contentId}/transcripts/raw/transcribe.json`;
-      } else if (type === 'corrected') {
-        key = `content/${contentId}/transcripts/corrected/transcript.json`;
+    // GET /content/{contentId}/transcript (Authoritative Raw/Normalized ASR for Studio Explorer)
+    if (
+      (path === '/content/{contentId}/transcript' ||
+       path === '/content/{contentId}/transcripts/raw' ||
+       path === '/content/{contentId}/transcripts/normalized' ||
+       (path === '/content/{contentId}/transcripts/{type}' && event.pathParameters?.type !== 'corrected')) &&
+      method === 'GET'
+    ) {
+      const contentId = event.pathParameters?.contentId;
+      const type = event.pathParameters?.type || event.queryStringParameters?.type;
+
+      if (type === 'transcribe' || event.queryStringParameters?.raw === 'true') {
+        const rawKey = `content/${contentId}/transcripts/raw/transcribe.json`;
+        try {
+          const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: rawKey });
+          const res = await s3Client.send(command);
+          const bodyStr = await res.Body?.transformToString();
+          return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
+        } catch (err: any) {
+          if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+            return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Raw transcript not found', contentId }) };
+          }
+          throw err;
+        }
       }
-      
+
+      const normalizedKey = `content/${contentId}/transcripts/normalized/transcript.json`;
+      try {
+        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: normalizedKey });
+        const res = await s3Client.send(command);
+        const bodyStr = await res.Body?.transformToString();
+        return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
+      } catch (err: any) {
+        if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+          // Fallback to raw transcribe.json
+          const rawKey = `content/${contentId}/transcripts/raw/transcribe.json`;
+          try {
+            const rawCmd = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: rawKey });
+            const rawRes = await s3Client.send(rawCmd);
+            const rawStr = await rawRes.Body?.transformToString();
+            return { statusCode: 200, headers: corsHeaders(), body: rawStr || '{}' };
+          } catch (fallbackErr: any) {
+            return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcript not found', contentId }) };
+          }
+        }
+        throw err;
+      }
+    }
+
+    // GET /content/{contentId}/transcript/corrected (Corrected Transcript for Studio Explorer)
+    if (
+      (path === '/content/{contentId}/transcript/corrected' ||
+       path === '/content/{contentId}/transcripts/corrected' ||
+       (path === '/content/{contentId}/transcripts/{type}' && event.pathParameters?.type === 'corrected')) &&
+      method === 'GET'
+    ) {
+      const contentId = event.pathParameters?.contentId;
+      const key = `content/${contentId}/transcripts/corrected/transcript.json`;
       try {
         const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
         const res = await s3Client.send(command);
         const bodyStr = await res.Body?.transformToString();
         return { statusCode: 200, headers: corsHeaders(), body: bodyStr || '{}' };
       } catch (err: any) {
-        if (err.name === 'NoSuchKey') {
-          return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Transcript not found' }) };
+        if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
+          return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: 'Corrected transcript not found', contentId }) };
         }
         throw err;
       }
@@ -886,20 +972,32 @@ export const handler = async (event: any) => {
       return { statusCode: 202, headers: corsHeaders(), body: JSON.stringify({ contentId, status: 'queued' }) };
     }
     
-    if (path === '/content' && method === 'POST') {
-      const body = JSON.parse(event.body);
+    if (path === "/content" && method === "POST") {
+      const body = JSON.parse(event.body || "{}");
       const { contentId, title, contentType, language, description, videoS3Key, videoUrl, posterS3Key, posterUrl } = body;
       
       if (!contentId || !title || !contentType || !language) {
-        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Missing required fields' }) };
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: "Missing required fields" }) };
+      }
+
+      const rawCategory = body.contentCategory || "other";
+      if (!ALLOWED_CONTENT_CATEGORIES.includes(rawCategory)) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders(),
+          body: JSON.stringify({
+            error: `Invalid contentCategory: ${rawCategory}. Allowed values are: ${ALLOWED_CONTENT_CATEGORIES.join(", ")}`
+          })
+        };
       }
       
       const item = {
         contentId,
         title,
         contentType,
+        contentCategory: rawCategory,
         language,
-        description: description || '',
+        description: description || "",
         videoS3Key: videoS3Key || null,
         videoUrl: videoUrl || null,
         posterS3Key: posterS3Key || null,
@@ -908,12 +1006,12 @@ export const handler = async (event: any) => {
         catalogVisible: body.catalogVisible !== false,
         aiReady: false,
         processing: {
-          transcriptionStatus: 'not_started',
-          transcriptCorrectionStatus: 'not_started',
-          sceneDetectionStatus: 'not_started',
-          metadataExtractionStatus: 'not_started',
-          intelligenceCompilationStatus: 'not_started',
-          pipelineStatus: 'idle',
+          transcriptionStatus: "not_started",
+          transcriptCorrectionStatus: "not_started",
+          sceneDetectionStatus: "not_started",
+          metadataExtractionStatus: "not_started",
+          intelligenceCompilationStatus: "not_started",
+          pipelineStatus: "idle",
         },
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -925,18 +1023,28 @@ export const handler = async (event: any) => {
       return { statusCode: 201, headers: corsHeaders(), body: JSON.stringify(item) };
     }
     
-    if (path === '/content/{contentId}' && method === 'PATCH') {
+    if (path === "/content/{contentId}" && method === "PATCH") {
       const contentId = event.pathParameters.contentId;
-      const body = JSON.parse(event.body);
+      const body = JSON.parse(event.body || "{}");
       
-      const updateKeys = Object.keys(body).filter(k => k !== 'contentId');
-      if (updateKeys.length === 0) {
-        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'No fields to update' }) };
+      if (body.contentCategory !== undefined && !ALLOWED_CONTENT_CATEGORIES.includes(body.contentCategory)) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders(),
+          body: JSON.stringify({
+            error: `Invalid contentCategory: ${body.contentCategory}. Allowed values are: ${ALLOWED_CONTENT_CATEGORIES.join(", ")}`
+          })
+        };
       }
       
-      let updateExpr = 'SET ' + updateKeys.map(k => `#${k} = :${k}`).join(', ') + ', #updatedAt = :updatedAt';
-      const exprAttrNames: any = { '#updatedAt': 'updatedAt' };
-      const exprAttrValues: any = { ':updatedAt': new Date().toISOString() };
+      const updateKeys = Object.keys(body).filter(k => (ALLOWED_EDITABLE_FIELDS as readonly string[]).includes(k));
+      if (updateKeys.length === 0) {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: "No editable fields provided" }) };
+      }
+      
+      let updateExpr = "SET " + updateKeys.map(k => `#${k} = :${k}`).join(", ") + ", #updatedAt = :updatedAt";
+      const exprAttrNames: any = { "#updatedAt": "updatedAt" };
+      const exprAttrValues: any = { ":updatedAt": new Date().toISOString() };
       
       updateKeys.forEach(k => {
         exprAttrNames[`#${k}`] = k;
@@ -949,11 +1057,117 @@ export const handler = async (event: any) => {
         UpdateExpression: updateExpr,
         ExpressionAttributeNames: exprAttrNames,
         ExpressionAttributeValues: exprAttrValues,
-        ReturnValues: 'ALL_NEW'
+        ReturnValues: "ALL_NEW"
       });
       
       const response = await docClient.send(command);
-      return { statusCode: 200, headers: corsHeaders(), body: JSON.stringify(response.Attributes) };
+      const updatedItem = response.Attributes || {};
+      return {
+        statusCode: 200,
+        headers: corsHeaders(),
+        body: JSON.stringify({
+          ...updatedItem,
+          contentCategory: updatedItem.contentCategory || "other"
+        })
+      };
+    }
+
+    if (path === "/content/{contentId}" && method === "DELETE") {
+      const contentId = event.pathParameters?.contentId;
+      if (!contentId) {
+        return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: "Missing contentId" }) };
+      }
+
+      // Hackathon Safety: Protect core demo titles
+      if (PROTECTED_DEMO_TITLES.has(contentId)) {
+        return {
+          statusCode: 403,
+          headers: corsHeaders(),
+          body: JSON.stringify({
+            error: `Cannot delete protected demo title: ${contentId}`,
+            protected: true,
+            contentId
+          })
+        };
+      }
+
+      // Check item exists
+      const getRes = await docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: { contentId } }));
+      const item = getRes.Item;
+      if (!item) {
+        return { statusCode: 404, headers: corsHeaders(), body: JSON.stringify({ error: "Content not found" }) };
+      }
+
+      // 1. Title-scoped S3 cleanup: content/${contentId}/...
+      try {
+        const prefix = `content/${contentId}/`;
+        let continuationToken: string | undefined = undefined;
+        do {
+          const listRes: any = await s3Client.send(new ListObjectsV2Command({
+            Bucket: BUCKET_NAME,
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+          }));
+
+          if (listRes.Contents && listRes.Contents.length > 0) {
+            const deleteKeys = listRes.Contents.map((obj: any) => ({ Key: obj.Key }));
+            await s3Client.send(new DeleteObjectsCommand({
+              Bucket: BUCKET_NAME,
+              Delete: { Objects: deleteKeys }
+            }));
+          }
+          continuationToken = listRes.NextContinuationToken;
+        } while (continuationToken);
+
+        // Delete specific media/poster keys if owned by this title
+        if (item.videoS3Key && !item.videoS3Key.startsWith(prefix) && item.videoS3Key.startsWith(`uploads/${contentId}`)) {
+          await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: item.videoS3Key })).catch(() => {});
+        }
+        if (item.posterS3Key && !item.posterS3Key.startsWith(prefix) && item.posterS3Key.startsWith(`posters/${contentId}`)) {
+          await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: item.posterS3Key })).catch(() => {});
+        }
+      } catch (s3Err: any) {
+        console.warn(`[CONTENT_DELETE] S3 cleanup warning for ${contentId}:`, s3Err.message);
+      }
+
+      // 2. Viewer Progress Cleanup (Remove progress records so Continue Watching / History has no ghost cards)
+      if (VIEWER_TABLE_NAME) {
+        try {
+          const scanRes = await docClient.send(new ScanCommand({
+            TableName: VIEWER_TABLE_NAME,
+            FilterExpression: "contentId = :cid",
+            ExpressionAttributeValues: { ":cid": contentId }
+          }));
+
+          const progressRecords = scanRes.Items || [];
+          for (const prog of progressRecords) {
+            if (prog.viewerId) {
+              await docClient.send(new DeleteCommand({
+                TableName: VIEWER_TABLE_NAME,
+                Key: { viewerId: prog.viewerId, contentId }
+              })).catch(() => {});
+            }
+          }
+        } catch (vpErr: any) {
+          console.warn(`[CONTENT_DELETE] Viewer progress cleanup warning for ${contentId}:`, vpErr.message);
+        }
+      }
+
+      // 3. Delete content record from DynamoDB
+      await docClient.send(new DeleteCommand({
+        TableName: TABLE_NAME,
+        Key: { contentId }
+      }));
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders(),
+        body: JSON.stringify({
+          success: true,
+          message: "Content deleted successfully",
+          contentId
+        })
+      };
     }
     
     // Traceable Amazon Transcribe rerun path (Requirements 19-36)
@@ -1471,6 +1685,12 @@ export const handler = async (event: any) => {
       }
     }
     
+    console.warn(`[CONTENT_API_UNKNOWN_ROUTE] Method: ${method}, Path: ${path}, Resource: ${event.resource}`);
+    return {
+      statusCode: 404,
+      headers: corsHeaders(),
+      body: JSON.stringify({ error: `Not found: ${method} ${path}` })
+    };
   } catch (error: any) {
     console.error("Content API Unhandled Error:", error);
     return { 

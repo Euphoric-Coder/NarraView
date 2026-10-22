@@ -1,6 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { ViewerProgress, PlaybackSessionResponse, ProgressUpdateRequest, ContinueWatchingItem, ViewerHistoryItem } from './types';
+import { ViewerProgress, PlaybackSessionResponse, ProgressUpdateRequest, ContinueWatchingItem, ViewerHistoryItem, ViewerAccessibilityProfile, DEFAULT_ACCESSIBILITY_PROFILE, ALLOWED_EXPLANATION_STYLES, ALLOWED_VERBOSITIES } from './types';
 import { mergeIntervals, mergeMultipleIntervals } from './intervals';
 import { validatePosition, calculateProgressPercent, evaluateCompletion, isEligibleForContinueWatching } from './progress';
 import { buildViewerReturnContext } from './returnIntelligence';
@@ -43,6 +43,162 @@ export const handler = async (event: any): Promise<any> => {
         statusCode: 400,
         headers,
         body: JSON.stringify({ error: 'Missing required viewerId parameter' })
+      };
+    }
+
+
+    // 0a. GET /viewer/{viewerId}/accessibility
+    if (method === 'GET' && path.includes('/accessibility')) {
+      const existingRes = await docClient.send(new GetCommand({
+        TableName: TABLE_NAME,
+        Key: { viewerId, contentId: '__accessibility__' }
+      }));
+
+      const profile: ViewerAccessibilityProfile = existingRes.Item ? {
+        viewerId,
+        explanationStyle: existingRes.Item.explanationStyle || DEFAULT_ACCESSIBILITY_PROFILE.explanationStyle,
+        verbosity: existingRes.Item.verbosity || DEFAULT_ACCESSIBILITY_PROFILE.verbosity,
+        jargonSupport: typeof existingRes.Item.jargonSupport === 'boolean' ? existingRes.Item.jargonSupport : DEFAULT_ACCESSIBILITY_PROFILE.jargonSupport,
+        entityReminders: typeof existingRes.Item.entityReminders === 'boolean' ? existingRes.Item.entityReminders : DEFAULT_ACCESSIBILITY_PROFILE.entityReminders,
+        conceptReminders: typeof existingRes.Item.conceptReminders === 'boolean' ? existingRes.Item.conceptReminders : DEFAULT_ACCESSIBILITY_PROFILE.conceptReminders,
+        stepByStep: typeof existingRes.Item.stepByStep === 'boolean' ? existingRes.Item.stepByStep : DEFAULT_ACCESSIBILITY_PROFILE.stepByStep,
+        reducedCognitiveLoad: typeof existingRes.Item.reducedCognitiveLoad === 'boolean' ? existingRes.Item.reducedCognitiveLoad : DEFAULT_ACCESSIBILITY_PROFILE.reducedCognitiveLoad,
+        autoExplainComplexTerms: typeof existingRes.Item.autoExplainComplexTerms === 'boolean' ? existingRes.Item.autoExplainComplexTerms : DEFAULT_ACCESSIBILITY_PROFILE.autoExplainComplexTerms,
+        updatedAt: existingRes.Item.updatedAt || new Date().toISOString()
+      } : {
+        viewerId,
+        ...DEFAULT_ACCESSIBILITY_PROFILE,
+        updatedAt: new Date().toISOString()
+      };
+
+      console.log('[VIEWER_TELEMETRY] ACCESSIBILITY_PROFILE_LOADED', {
+        viewerId,
+        explanationStyle: profile.explanationStyle,
+        verbosity: profile.verbosity,
+        reducedCognitiveLoad: profile.reducedCognitiveLoad,
+        isDefault: !existingRes.Item
+      });
+
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify(profile)
+      };
+    }
+
+    // 0b. PUT /viewer/{viewerId}/accessibility
+    if (method === 'PUT' && path.includes('/accessibility')) {
+      let body: any = {};
+      try {
+        body = event.body ? JSON.parse(event.body) : {};
+      } catch (e) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'Invalid JSON body' })
+        };
+      }
+
+      // Validation
+      if (body.explanationStyle !== undefined && !ALLOWED_EXPLANATION_STYLES.includes(body.explanationStyle)) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({
+            error: `Invalid explanationStyle: ${body.explanationStyle}. Allowed values: ${ALLOWED_EXPLANATION_STYLES.join(' , ')}`
+          })
+        };
+      }
+
+      if (body.verbosity !== undefined && !ALLOWED_VERBOSITIES.includes(body.verbosity)) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({
+            error: `Invalid verbosity: ${body.verbosity}. Allowed values: ${ALLOWED_VERBOSITIES.join(' , ')}`
+          })
+        };
+      }
+
+      const booleanFields = [
+        'jargonSupport',
+        'entityReminders',
+        'conceptReminders',
+        'stepByStep',
+        'reducedCognitiveLoad',
+        'autoExplainComplexTerms'
+      ] as const;
+
+      for (const field of booleanFields) {
+        if (body[field] !== undefined && typeof body[field] !== 'boolean') {
+          return {
+            statusCode: 400,
+            headers,
+            body: JSON.stringify({
+              error: `Invalid value for boolean field ${field}: must be true or false`
+            })
+          };
+        }
+      }
+
+      // Fetch existing
+      const existingRes = await docClient.send(new GetCommand({
+        TableName: TABLE_NAME,
+        Key: { viewerId, contentId: '__accessibility__' }
+      }));
+
+      const existing = existingRes.Item || {};
+      const now = new Date().toISOString();
+
+      const updatedProfile: ViewerAccessibilityProfile = {
+        viewerId,
+        explanationStyle: body.explanationStyle !== undefined 
+          ? body.explanationStyle 
+          : (existing.explanationStyle || DEFAULT_ACCESSIBILITY_PROFILE.explanationStyle),
+        verbosity: body.verbosity !== undefined 
+          ? body.verbosity 
+          : (existing.verbosity || DEFAULT_ACCESSIBILITY_PROFILE.verbosity),
+        jargonSupport: body.jargonSupport !== undefined 
+          ? body.jargonSupport 
+          : (typeof existing.jargonSupport === 'boolean' ? existing.jargonSupport : DEFAULT_ACCESSIBILITY_PROFILE.jargonSupport),
+        entityReminders: body.entityReminders !== undefined 
+          ? body.entityReminders 
+          : (typeof existing.entityReminders === 'boolean' ? existing.entityReminders : DEFAULT_ACCESSIBILITY_PROFILE.entityReminders),
+        conceptReminders: body.conceptReminders !== undefined 
+          ? body.conceptReminders 
+          : (typeof existing.conceptReminders === 'boolean' ? existing.conceptReminders : DEFAULT_ACCESSIBILITY_PROFILE.conceptReminders),
+        stepByStep: body.stepByStep !== undefined 
+          ? body.stepByStep 
+          : (typeof existing.stepByStep === 'boolean' ? existing.stepByStep : DEFAULT_ACCESSIBILITY_PROFILE.stepByStep),
+        reducedCognitiveLoad: body.reducedCognitiveLoad !== undefined 
+          ? body.reducedCognitiveLoad 
+          : (typeof existing.reducedCognitiveLoad === 'boolean' ? existing.reducedCognitiveLoad : DEFAULT_ACCESSIBILITY_PROFILE.reducedCognitiveLoad),
+        autoExplainComplexTerms: body.autoExplainComplexTerms !== undefined 
+          ? body.autoExplainComplexTerms 
+          : (typeof existing.autoExplainComplexTerms === 'boolean' ? existing.autoExplainComplexTerms : DEFAULT_ACCESSIBILITY_PROFILE.autoExplainComplexTerms),
+        updatedAt: now
+      };
+
+      await docClient.send(new PutCommand({
+        TableName: TABLE_NAME,
+        Item: {
+          ...updatedProfile,
+          contentId: '__accessibility__'
+        }
+      }));
+
+      console.log('[VIEWER_TELEMETRY] ACCESSIBILITY_PROFILE_UPDATED', {
+        viewerId,
+        updatedFields: Object.keys(body),
+        explanationStyle: updatedProfile.explanationStyle,
+        verbosity: updatedProfile.verbosity,
+        reducedCognitiveLoad: updatedProfile.reducedCognitiveLoad
+      });
+
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify(updatedProfile)
       };
     }
 
@@ -366,7 +522,7 @@ export const handler = async (event: any): Promise<any> => {
         const contentItem = contentMap[prog.contentId];
         // Enforce eligibility:
         // position >= 5.0s, isCompleted === false, catalogVisible !== false, mediaPlayable !== false
-        if (!isEligibleForContinueWatching(prog, contentItem)) {
+        if (prog.contentId === '__accessibility__' || !isEligibleForContinueWatching(prog, contentItem)) {
           continue;
         }
 
@@ -443,7 +599,7 @@ export const handler = async (event: any): Promise<any> => {
         }
       }
 
-      const historyList: ViewerHistoryItem[] = progressRecords.map(prog => {
+      const historyList: ViewerHistoryItem[] = progressRecords.filter(p => p.contentId !== '__accessibility__').map(prog => {
         const contentItem = contentMap[prog.contentId];
         const duration = prog.durationSeconds || contentItem?.durationSeconds || 0;
         const runtime = contentItem?.runtime || formatRuntimeString(duration);

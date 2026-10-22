@@ -68,6 +68,7 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
             description: latest.description || item.description,
             genre,
             contentType: latest.contentType || item.contentType,
+            contentCategory: latest.contentCategory || item.contentCategory || "other",
             runtime,
             durationSeconds: durationSec,
             videoSource: latest.videoUrl || item.videoSource,
@@ -183,8 +184,20 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
     ? "Welcome Back"
     : undefined;
 
+  const categoryLabelMap: Record<string, string> = {
+    documentary: "Documentary",
+    tutorial: "Tutorial",
+    demo: "Demo",
+    narrative: "Story",
+    educational: "Educational",
+    other: "Feature"
+  };
+  const categoryDisplay = contentItem.contentCategory && categoryLabelMap[contentItem.contentCategory]
+    ? categoryLabelMap[contentItem.contentCategory]
+    : contentItem.genre;
+
   const metadataString = [
-    contentItem.genre,
+    categoryDisplay,
     contentItem.runtime,
     contentItem.year,
     progressText,
@@ -205,6 +218,17 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
             {metadataString}
           </Text>
           <Text style={styles.description}>{contentItem.description}</Text>
+
+          {/* NarraView Value Preview */}
+          <View style={styles.valuePreviewCard}>
+            <Text style={styles.valuePreviewTitle}>✨ NarraView Intelligence</Text>
+            <View style={styles.valuePreviewRow}>
+              <Text style={styles.valuePreviewItem}>• Ask about what you've seen</Text>
+              <Text style={styles.valuePreviewItem}>• Spoiler-safe answers</Text>
+              <Text style={styles.valuePreviewItem}>• Personalized recap</Text>
+              <Text style={styles.valuePreviewItem}>• Adaptive explanations</Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.actions}>
@@ -231,23 +255,18 @@ export const DetailsScreen = ({ item, onWatch, onBack }: DetailsScreenProps) => 
               style={styles.secondaryButton}
             />
           )}
-          <FocusableButton
-            label="Ask NarraView"
-            onPress={() => {}}
-            disabled
-            style={styles.secondaryButton}
-          />
         </View>
       </TVFocusGuideView>
 
       {/* Pre-resume Previously On Modal */}
       {isRecapModalVisible && (
         <View style={styles.modalBackdrop}>
-          <TVFocusGuideView style={styles.modalCard} autoFocus>
+          <TVFocusGuideView style={styles.modalCard} autoFocus trapFocus={true}>
             <View style={styles.modalHeader}>
               <View style={styles.modalHeaderLeft}>
-                <Text style={styles.modalEyebrow}>PERSONALIZED RECAP</Text>
-                <Text style={styles.modalTitle}>Previously On {contentItem.title}</Text>
+                <Text style={styles.modalEyebrow}>PREVIOUSLY ON</Text>
+                <Text style={styles.modalTitle}>{contentItem.title}</Text>
+                <Text style={styles.modalSubtitle}>Here's what matters before you continue.</Text>
               </View>
               {viewerProgress?.positionSeconds ? (
                 <View style={styles.positionBadge}>
@@ -349,36 +368,64 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: spacing.heroInset,
     justifyContent: "center",
-    paddingBottom: 80,
+    paddingVertical: 36,
   },
   textContainer: {
-    maxWidth: 960,
+    maxWidth: 920,
   },
   title: {
     color: colors.primaryText,
-    fontSize: typography.display.fontSize,
-    fontWeight: typography.display.fontWeight,
-    lineHeight: typography.display.lineHeight,
-    letterSpacing: typography.display.letterSpacing,
+    fontSize: 48,
+    fontWeight: "700",
+    lineHeight: 56,
+    letterSpacing: -0.5,
   },
   metadata: {
     color: colors.accent,
-    fontSize: typography.metadata.fontSize,
+    fontSize: 14,
     fontWeight: "700",
-    marginTop: spacing.md,
-    letterSpacing: typography.metadata.letterSpacing,
-    textTransform: typography.metadata.textTransform,
+    marginTop: 12,
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
   },
   description: {
     color: colors.secondaryText,
-    fontSize: typography.body.fontSize,
-    lineHeight: typography.body.lineHeight,
-    letterSpacing: typography.body.letterSpacing,
-    marginTop: spacing.lg,
+    fontSize: 18,
+    lineHeight: 26,
+    letterSpacing: 0.3,
+    marginTop: 14,
+    maxWidth: 860,
+  },
+  valuePreviewCard: {
+    marginTop: 18,
+    backgroundColor: "rgba(245, 184, 0, 0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(245, 184, 0, 0.2)",
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    maxWidth: 860,
+    alignSelf: "flex-start",
+  },
+  valuePreviewTitle: {
+    color: colors.accent,
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  valuePreviewRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 16,
+  },
+  valuePreviewItem: {
+    color: "rgba(255, 255, 255, 0.75)",
+    fontSize: 13,
   },
   actions: {
     flexDirection: "row",
-    marginTop: spacing.xxl,
+    marginTop: 28,
   },
   primaryButton: {
     marginRight: spacing.md,
@@ -394,20 +441,24 @@ const styles = StyleSheet.create({
   // Pre-resume Modal Styles
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
+    backgroundColor: "rgba(0, 0, 0, 0.88)",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 100,
   },
   modalCard: {
-    width: "70%",
-    maxWidth: 880,
-    maxHeight: "85%",
+    width: "75%",
+    maxWidth: 920,
+    height: "82%",
     backgroundColor: "rgba(14, 16, 22, 0.98)",
     borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: "rgba(255, 176, 0, 0.35)",
-    padding: 32,
+    borderColor: "rgba(255, 176, 0, 0.4)",
+    paddingHorizontal: 32,
+    paddingTop: 28,
+    paddingBottom: 24,
+    display: "flex",
+    flexDirection: "column",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 16 },
     shadowOpacity: 0.8,
@@ -418,14 +469,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 16,
+    marginBottom: 12,
   },
   modalHeaderLeft: {
     flex: 1,
+    marginRight: 16,
   },
   modalEyebrow: {
     color: colors.accent,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "700",
     letterSpacing: 2,
     textTransform: "uppercase",
@@ -433,8 +485,14 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     color: colors.primaryText,
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  modalSubtitle: {
+    color: "rgba(255, 255, 255, 0.65)",
+    fontSize: 14,
+    marginTop: 4,
   },
   positionBadge: {
     backgroundColor: "rgba(255, 176, 0, 0.15)",
@@ -443,59 +501,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
+    alignSelf: "flex-start",
   },
   positionBadgeText: {
     color: colors.accent,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
   },
   modalDivider: {
     height: 1,
     backgroundColor: "rgba(255, 255, 255, 0.1)",
-    marginBottom: 20,
+    marginBottom: 16,
   },
   modalBody: {
     flex: 1,
-    minHeight: 180,
+    minHeight: 0,
+    overflow: "hidden",
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    paddingVertical: 40,
+    paddingVertical: 20,
   },
   loadingText: {
     color: colors.primaryText,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "600",
     marginTop: 16,
+    textAlign: "center",
   },
   loadingSubtext: {
     color: colors.mutedText,
-    fontSize: 16,
+    fontSize: 14,
     marginTop: 6,
+    textAlign: "center",
   },
   errorContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    paddingVertical: 40,
+    paddingVertical: 20,
   },
   errorText: {
     color: colors.secondaryText,
-    fontSize: 18,
+    fontSize: 16,
     textAlign: "center",
   },
   recapScrollView: {
     flex: 1,
   },
   recapScrollContent: {
-    paddingBottom: 16,
+    paddingVertical: 8,
+    paddingRight: 12,
   },
   recapSummary: {
-    color: colors.secondaryText,
-    fontSize: 18,
-    lineHeight: 26,
+    color: "rgba(255, 255, 255, 0.9)",
+    fontSize: 16,
+    lineHeight: 24,
     marginBottom: 16,
   },
   bulletsList: {
@@ -508,15 +571,15 @@ const styles = StyleSheet.create({
   },
   bulletDot: {
     color: colors.accent,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "bold",
-    marginRight: 12,
-    lineHeight: 26,
+    marginRight: 10,
+    lineHeight: 22,
   },
   bulletText: {
     color: colors.primaryText,
-    fontSize: 18,
-    lineHeight: 26,
+    fontSize: 15,
+    lineHeight: 22,
     flex: 1,
   },
   chipsSection: {
@@ -524,10 +587,11 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: "rgba(255, 255, 255, 0.08)",
+    marginBottom: 8,
   },
   chipsSectionLabel: {
     color: colors.mutedText,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
     letterSpacing: 1.5,
     marginBottom: 8,
@@ -540,26 +604,29 @@ const styles = StyleSheet.create({
   chip: {
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.12)",
   },
   chipText: {
     color: colors.secondaryText,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "500",
   },
   modalActions: {
     flexDirection: "row",
-    marginTop: 20,
+    alignItems: "center",
+    marginTop: 12,
     borderTopWidth: 1,
     borderTopColor: "rgba(255, 255, 255, 0.1)",
-    paddingTop: 16,
+    paddingTop: 18,
   },
   modalPrimaryBtn: {
     marginRight: spacing.md,
+    minWidth: 200,
   },
   modalSecondaryBtn: {
+    minWidth: 120,
   },
 });

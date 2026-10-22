@@ -7,9 +7,10 @@ import { FocusableButton } from './FocusableButton';
 
 interface HeroBannerProps {
   onExplore: () => void;
+  onAccessibility?: () => void;
 }
 
-export const HeroBanner = ({ onExplore }: HeroBannerProps) => {
+export const HeroBanner = ({ onExplore, onAccessibility }: HeroBannerProps) => {
   return (
     <View style={styles.container}>
       <View style={styles.backdrop}>
@@ -21,6 +22,7 @@ export const HeroBanner = ({ onExplore }: HeroBannerProps) => {
         <Text style={styles.appTitle}>NarraView</Text>
         <Text style={styles.appTagline}>Understand what you watch.</Text>
         <Text style={styles.description}>AI-native contextual viewing for Fire TV.</Text>
+        <Text style={styles.valueCopy}>Playback-aware intelligence that understands what you've seen — without ruining what comes next.</Text>
         
         <View style={styles.actions}>
           <FocusableButton 
@@ -28,6 +30,13 @@ export const HeroBanner = ({ onExplore }: HeroBannerProps) => {
             onPress={onExplore}
             style={styles.button}
           />
+          {onAccessibility && (
+            <FocusableButton 
+              label="⚙ Explanation Preferences" 
+              onPress={onAccessibility}
+              style={[styles.button, styles.settingsButton]}
+            />
+          )}
         </View>
       </View>
     </View>
@@ -78,11 +87,21 @@ const styles = StyleSheet.create({
     letterSpacing: typography.body.letterSpacing,
     marginTop: spacing.md,
   },
+  valueCopy: {
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: 14,
+    marginTop: 6,
+    letterSpacing: 0.3,
+  },
   actions: {
     marginTop: spacing.xl,
     flexDirection: 'row',
   },
   button: {
+    minWidth: 260,
+  },
+  settingsButton: {
+    marginLeft: 16,
     minWidth: 260,
   }
 });

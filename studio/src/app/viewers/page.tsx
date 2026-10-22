@@ -49,6 +49,25 @@ interface HistoryItem extends ContinueWatchingItem {
   watchedIntervals: WatchedInterval[];
 }
 
+interface ViewerAccessibilityProfile {
+  viewerId: string;
+  explanationStyle: string;
+  verbosity: string;
+  jargonSupport: boolean;
+  entityReminders: boolean;
+  conceptReminders: boolean;
+  stepByStep: boolean;
+  reducedCognitiveLoad: boolean;
+  autoExplainComplexTerms: boolean;
+  updatedAt: string;
+}
+
+interface MultiStyleTestResult {
+  standard: any;
+  simple: any;
+  verySimple: any;
+}
+
 interface RecapTestResult {
   title?: string;
   summary?: string;
@@ -105,6 +124,18 @@ export default function ViewerSessionsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Accessibility Profile State (v0.19)
+  const [accessProfile, setAccessProfile] = useState<ViewerAccessibilityProfile | null>(null);
+  const [accessProfileLoading, setAccessProfileLoading] = useState(false);
+
+  // Side-by-Side Accessibility Tester State (v0.19 Req 37)
+  const [sideQuestion, setSideQuestion] = useState("What is Haversine distance?");
+  const [sideContentId, setSideContentId] = useState("city-care-demo");
+  const [sideTimestamp, setSideTimestamp] = useState("134.8");
+  const [isTestingAccessibility, setIsTestingAccessibility] = useState(false);
+  const [sideResults, setSideResults] = useState<MultiStyleTestResult | null>(null);
+  const [sideError, setSideError] = useState("");
+
   // Recap Tester State
   const [testContentId, setTestContentId] = useState("city-care-demo");
   const [testTimestamp, setTestTimestamp] = useState("134.8");
@@ -134,6 +165,22 @@ export default function ViewerSessionsPage() {
       if (Array.isArray(cwData) && cwData.length > 0) {
         setTestContentId(cwData[0].contentId);
         setTestTimestamp(cwData[0].positionSeconds.toString());
+        setSideContentId(cwData[0].contentId);
+        setSideTimestamp(cwData[0].positionSeconds.toString());
+      }
+
+      // 3. Fetch Accessibility Profile (v0.19 Req 36)
+      try {
+        setAccessProfileLoading(true);
+        const accessRes = await fetch(`${API_BASE_URL}/viewer/${encodeURIComponent(id)}/accessibility`);
+        if (accessRes.ok) {
+          const accessData = await accessRes.json();
+          setAccessProfile(accessData);
+        }
+      } catch (ae) {
+        console.warn("Could not load accessibility profile:", ae);
+      } finally {
+        setAccessProfileLoading(false);
       }
     } catch (err: any) {
       console.error("Failed to fetch viewer data:", err);
@@ -202,6 +249,61 @@ export default function ViewerSessionsPage() {
       setTestError(err.message || "Recap generation failed");
     } finally {
       setIsTestingRecap(false);
+    }
+  };
+
+
+  const handleRunSideBySideTest = async () => {
+    setIsTestingAccessibility(true);
+    setSideError("");
+    setSideResults(null);
+
+    const ts = parseFloat(sideTimestamp) || 0;
+
+    try {
+      const executeQuery = async (style: string) => {
+        const res = await fetch(`${API_BASE_URL}/ai/ask`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-token": "narraview-admin-token"
+          },
+          body: JSON.stringify({
+            contentId: sideContentId,
+            timestamp: ts,
+            viewerTimestamp: ts,
+            mode: "ask",
+            question: sideQuestion,
+            viewerId: activeViewerId,
+            allowPreActivationTest: true,
+            accessibilityProfile: {
+              explanationStyle: style,
+              jargonSupport: true,
+              entityReminders: true,
+              conceptReminders: true
+            }
+          })
+        });
+        if (!res.ok) throw new Error(`Ask request for ${style} failed with ${res.status}`);
+        return await res.json();
+      };
+
+      const [stdRes, simpleRes, verySimpleRes] = await Promise.all([
+        executeQuery("standard"),
+        executeQuery("simple"),
+        executeQuery("very_simple")
+      ]);
+
+      setSideResults({
+        standard: stdRes,
+        simple: simpleRes,
+        verySimple: verySimpleRes
+      });
+    } catch (err: any) {
+      console.error("Side-by-side test failed:", err);
+      setSideError(err.message || "Failed to generate comparison");
+    } finally {
+      setIsTestingAccessibility(false);
     }
   };
 

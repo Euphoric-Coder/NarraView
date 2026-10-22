@@ -148,6 +148,30 @@ export const handler = async (event: any): Promise<any> => {
       }
     }
 
+    // Load viewer accessibility profile (v0.19 Backend-Side Profile Fetch, Req 22, 53)
+    let accessibilityProfile: any = (body as any).accessibilityProfile;
+    if (body.viewerId && VIEWER_TABLE_NAME) {
+      try {
+        const accessRes = await docClient.send(new GetCommand({
+          TableName: VIEWER_TABLE_NAME,
+          Key: { viewerId: body.viewerId, contentId: '__accessibility__' }
+        }));
+        if (accessRes.Item) {
+          console.log('[VIEWER_TELEMETRY] ACCESSIBILITY_PROFILE_LOADED', {
+            viewerId: body.viewerId,
+            explanationStyle: accessRes.Item.explanationStyle,
+            verbosity: accessRes.Item.verbosity
+          });
+          accessibilityProfile = {
+            ...accessRes.Item,
+            ...(accessibilityProfile || {})
+          };
+        }
+      } catch (err) {
+        console.warn('[ASK_SCENE] Could not load viewer accessibility profile:', err);
+      }
+    }
+
     // PROVIDER ABSTRACTION (Requirement 37, 38):
     // If title is Signal Lost, route through handcrafted provider to maintain 100% regression compatibility.
     // For all other processed titles (e.g. CityCare), route through Generic Temporal RAG engine.
@@ -161,7 +185,8 @@ export const handler = async (event: any): Promise<any> => {
         requestId: event.requestContext?.requestId,
         viewerId: body.viewerId,
         watchedIntervals,
-        resumeContext
+        resumeContext,
+        accessibilityProfile
       };
 
       const ragResponse = await temporalRagService.processRequest(ragRequest, {

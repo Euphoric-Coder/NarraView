@@ -45,15 +45,7 @@ export const PlayerControls = ({
           {currentScene && <Text style={styles.sceneTitle}>{currentScene}</Text>}
         </View>
         
-        {/* Temporary Debug Overlay */}
-        <View style={styles.debugBox}>
-          <Text style={styles.debugText}>DEBUG</Text>
-          <Text style={styles.debugText}>time: {currentTimeSeconds.toFixed(2)}s</Text>
-          <Text style={styles.debugText}>duration: {durationSeconds.toFixed(2)}s</Text>
-          <Text style={styles.debugText}>playing: {isPlaying.toString()}</Text>
-          <Text style={styles.debugText}>buffering: {isBuffering.toString()}</Text>
-          {currentScene && <Text style={styles.debugText}>scene: {currentScene}</Text>}
-        </View>
+        
       </View>
 
       {/* Bottom Section: Scrubber & Controls */}
@@ -85,7 +77,7 @@ export const PlayerControls = ({
           {/* Ask NarraView Button */}
           {onOpenNarraView && (
             <FocusableButton 
-              label="[ Ask NarraView ]"
+              label="✨ Ask NarraView"
               onPress={onOpenNarraView}
               style={styles.narraViewButton}
               labelStyle={styles.narraViewButtonLabel}

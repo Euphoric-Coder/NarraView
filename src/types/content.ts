@@ -1,3 +1,14 @@
+export const ALLOWED_CONTENT_CATEGORIES = [
+  "documentary",
+  "tutorial",
+  "demo",
+  "narrative",
+  "educational",
+  "other"
+] as const;
+
+export type ContentCategoryType = typeof ALLOWED_CONTENT_CATEGORIES[number];
+
 export type ReturnType = "NEW_VIEWER" | "SAME_SESSION_RETURN" | "SHORT_RETURN" | "LONG_RETURN" | "REWATCH";
 
 export interface WatchedInterval {
@@ -35,6 +46,7 @@ export interface ContentItem {
   description: string;
   genre: string;
   contentType?: string;
+  contentCategory?: ContentCategoryType;
   runtime: string;
   year: number;
   progress?: number;
@@ -62,4 +74,38 @@ export interface ContentCategory {
   id: string;
   title: string;
   items: ContentItem[];
+}
+
+// v0.19 Accessibility Intelligence & Adaptive Explanation Types
+export type ExplanationStyle = 'standard' | 'simple' | 'very_simple';
+export type Verbosity = 'brief' | 'normal' | 'detailed';
+
+export interface ViewerAccessibilityProfile {
+  viewerId: string;
+  explanationStyle: ExplanationStyle;
+  verbosity: Verbosity;
+  jargonSupport: boolean;
+  entityReminders: boolean;
+  conceptReminders: boolean;
+  stepByStep: boolean;
+  reducedCognitiveLoad: boolean;
+  autoExplainComplexTerms: boolean;
+  updatedAt: string;
+}
+
+export interface JargonDefinition {
+  term: string;
+  definition: string;
+}
+
+export interface AccessibilityMetadata {
+  accessibilityApplied: boolean;
+  explanationStyle: ExplanationStyle;
+  verbosity: Verbosity;
+  jargonSupport: boolean;
+  jargonDefinitions?: JargonDefinition[];
+  entityReminderUsed?: boolean;
+  conceptReminderUsed?: boolean;
+  stepByStepUsed?: boolean;
+  reducedCognitiveLoadUsed?: boolean;
 }

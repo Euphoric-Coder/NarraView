@@ -80,6 +80,7 @@ export class CdkStack extends cdk.Stack {
       environment: {
         TABLE_NAME: contentTable.tableName,
         BUCKET_NAME: mediaBucket.bucketName,
+        VIEWER_TABLE_NAME: viewerProgressTable.tableName,
       }
     });
 
@@ -87,6 +88,8 @@ export class CdkStack extends cdk.Stack {
     contentTable.grantReadWriteData(contentLambda);
     mediaBucket.grantPut(contentLambda); // To generate presigned URLs for upload
     mediaBucket.grantRead(contentLambda); // To generate presigned URLs for playback
+    mediaBucket.grantDelete(contentLambda); // To clean up title-scoped artifacts on delete
+    viewerProgressTable.grantReadWriteData(contentLambda); // To clean up viewer progress on delete
 
     // Grant Transcribe Start permission
     contentLambda.addToRolePolicy(new iam.PolicyStatement({
@@ -294,6 +297,8 @@ export class CdkStack extends cdk.Stack {
     intelligenceCompilerLambda.grantInvoke(knowledgeExtractionWorkerLambda);
     knowledgeExtractionWorkerLambda.addEnvironment('INTELLIGENCE_COMPILER_FUNCTION_NAME', intelligenceCompilerLambda.functionName);
 
+
+
     // Viewer Progress & Sessions Lambda Function (v0.17)
     const viewerLambda = new NodejsFunction(this, 'ViewerLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -344,6 +349,7 @@ export class CdkStack extends cdk.Stack {
     const contentIdResource = contentResource.addResource('{contentId}');
     contentIdResource.addMethod('GET', contentIntegration);
     contentIdResource.addMethod('PATCH', contentIntegration);
+    contentIdResource.addMethod('DELETE', contentIntegration);
     
     const mediaUrlResource = contentIdResource.addResource('media-url');
     mediaUrlResource.addMethod('GET', contentIntegration);
@@ -389,6 +395,9 @@ export class CdkStack extends cdk.Stack {
     const intelligenceVersionResource = intelligenceResource.addResource('{version}');
     intelligenceVersionResource.addMethod('GET', contentIntegration);
 
+
+
+
     // Pipeline Reprocess API
     const pipelineResource = contentIdResource.addResource('pipeline');
     const reprocessPipelineResource = pipelineResource.addResource('reprocess');
@@ -425,6 +434,12 @@ export class CdkStack extends cdk.Stack {
 
     const resetViewerProgressResource = viewerProgressContentIdResource.addResource('reset');
     resetViewerProgressResource.addMethod('POST', viewerIntegration);
+
+    // Accessibility Intelligence Endpoints (v0.19)
+    const viewerAccessibilityResource = viewerIdResource.addResource("accessibility");
+    viewerAccessibilityResource.addMethod("GET", viewerIntegration);
+    viewerAccessibilityResource.addMethod("PUT", viewerIntegration);
+
 
     // Outputs
     new cdk.CfnOutput(this, 'NarraViewApiUrl', {

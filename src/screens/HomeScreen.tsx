@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ScrollView, StyleSheet, View, Text, ActivityIndicator, AppState, AppStateStatus } from 'react-native';
-import { ContentItem, ContentCategory, RuntimeProvider } from '../types/content';
+import { ContentItem, ContentCategory, RuntimeProvider, ContentCategoryType } from '../types/content';
 import { ContentRow } from '../components/ContentRow';
 import { HeroBanner } from '../components/HeroBanner';
-import { mockCategories } from '../data/mockContent';
+import { AccessibilitySettingsModal } from '../components/AccessibilitySettingsModal';
 import { colors } from '../theme/colors';
 import { TVFocusGuideView } from '@amazon-devices/react-native-kepler';
 import { listContentWithRetry } from '../services/contentApi';
@@ -11,6 +11,60 @@ import { formatRuntime } from '../utils/formatRuntime';
 import { getViewerId } from '../services/viewerIdentity';
 import { logRealVegaConfig } from '../config/env';
 import { getContinueWatching, getContinueWatchingWithRetry } from '../services/viewerProgressApi';
+
+
+export const CLOUD_CATEGORY_SECTIONS: Array<{ category: ContentCategoryType; id: string; title: string }> = [
+  { category: "documentary", id: "cloud-documentaries", title: "Documentaries" },
+  { category: "tutorial", id: "cloud-tutorials", title: "Tutorials" },
+  { category: "demo", id: "cloud-demos", title: "Demos" },
+  { category: "narrative", id: "cloud-stories", title: "Stories" },
+  { category: "educational", id: "cloud-educational", title: "Educational" },
+  { category: "other", id: "cloud-other", title: "More to Explore" },
+];
+
+export function groupCloudContentByCategory(items: ContentItem[]): ContentCategory[] {
+  const categories: ContentCategory[] = [];
+  const visibleItems = items.filter(item => item.catalogVisible !== false);
+
+  for (const section of CLOUD_CATEGORY_SECTIONS) {
+    const matchingItems = visibleItems.filter(
+      item => (item.contentCategory || "other") === section.category
+    );
+    if (matchingItems.length > 0) {
+      categories.push({
+        id: section.id,
+        title: section.title,
+        items: matchingItems,
+      });
+    }
+  }
+  return categories;
+}
+
+export function assembleHomeCategories(
+  continueWatchingItems: ContentItem[] = [],
+  cloudItems: ContentItem[] = []
+): ContentCategory[] {
+  const finalCategories: ContentCategory[] = [];
+
+  // Continue Watching stays on top and independent of category
+  if (continueWatchingItems && continueWatchingItems.length > 0) {
+    finalCategories.push({
+      id: 'continue-watching',
+      title: 'Continue Watching',
+      items: continueWatchingItems,
+    });
+  }
+
+  // NarraView Cloud content grouped by category into non-empty rows
+  if (cloudItems && cloudItems.length > 0) {
+    const cloudCategoryRows = groupCloudContentByCategory(cloudItems);
+    finalCategories.push(...cloudCategoryRows);
+  }
+
+  return finalCategories;
+}
+
 
 interface HomeScreenProps {
   onSelectItem: (item: ContentItem) => void;
@@ -65,6 +119,7 @@ function mapCloudItemToContentItem(item: any): ContentItem {
     description: item.description || '',
     genre,
     contentType: item.contentType,
+    contentCategory: item.contentCategory || "other",
     runtime,
     durationSeconds: durationSec,
     year: item.createdAt ? new Date(item.createdAt).getFullYear() : new Date().getFullYear(),
@@ -79,8 +134,10 @@ function mapCloudItemToContentItem(item: any): ContentItem {
 }
 
 export const HomeScreen = ({ onSelectItem, refreshTrigger }: HomeScreenProps) => {
-  const [categories, setCategories] = useState<ContentCategory[]>(mockCategories);
+  const [categories, setCategories] = useState<ContentCategory[]>([]);
   const [isColdBooting, setIsColdBooting] = useState<boolean>(true);
+  const [showAccessibility, setShowAccessibility] = useState<boolean>(false);
+  const [viewerId, setViewerId] = useState<string>('narraview-demo-viewer');
   
   const continueWatchingItemsRef = useRef<ContentItem[]>([]);
   const cloudItemsRef = useRef<ContentItem[]>([]);
@@ -103,6 +160,7 @@ export const HomeScreen = ({ onSelectItem, refreshTrigger }: HomeScreenProps) =>
 
       // Step 1: Guarantee stable viewer identity is ready before querying viewer data (Req 2)
       const viewerId = await getViewerId();
+      setViewerId(viewerId);
       console.log('[HOME_VIEWER_READY]', { viewerId });
       console.log('[VIEWER_ID_READY]', { viewerId });
 
@@ -146,25 +204,10 @@ export const HomeScreen = ({ onSelectItem, refreshTrigger }: HomeScreenProps) =>
       }
 
       // Step 3: Assemble categories
-      const finalCategories: ContentCategory[] = [];
-
-      if (continueWatchingItemsRef.current.length > 0) {
-        finalCategories.push({
-          id: 'continue-watching',
-          title: 'Continue Watching',
-          items: continueWatchingItemsRef.current
-        });
-      }
-
-      if (cloudItemsRef.current.length > 0) {
-        finalCategories.push({
-          id: 'cloud-content',
-          title: 'NarraView Cloud',
-          items: cloudItemsRef.current
-        });
-      }
-
-      finalCategories.push(...mockCategories);
+      const finalCategories = assembleHomeCategories(
+        continueWatchingItemsRef.current,
+        cloudItemsRef.current
+      );
       setCategories(finalCategories);
 
       console.log('[HOME_STATE_READY]', {
@@ -238,7 +281,7 @@ export const HomeScreen = ({ onSelectItem, refreshTrigger }: HomeScreenProps) =>
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={false}
       >
-        <HeroBanner onExplore={() => {}} />
+        <HeroBanner onExplore={() => {}} onAccessibility={() => setShowAccessibility(true)} />
 
         {isColdBooting && cloudItemsRef.current.length === 0 && (
           <View style={styles.loadingCloudRow}>
@@ -261,6 +304,11 @@ export const HomeScreen = ({ onSelectItem, refreshTrigger }: HomeScreenProps) =>
           ))}
         </TVFocusGuideView>
       </ScrollView>
+      <AccessibilitySettingsModal
+        visible={showAccessibility}
+        onClose={() => setShowAccessibility(false)}
+        viewerId={viewerId}
+      />
     </View>
   );
 };

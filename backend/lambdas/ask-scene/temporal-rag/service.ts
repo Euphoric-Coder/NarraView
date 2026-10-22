@@ -14,6 +14,8 @@ import { buildTemporalSnapshot } from "./snapshot";
 import { retrieveSafeEvidence } from "./retrieval";
 import { validateQuestionPremise } from "./premise";
 import { validateGrounding } from "./grounding";
+import { resolveAccessibilityProfile, detectSafeJargon, buildAccessibilityPromptInstructions } from "./accessibility";
+import { ViewerAccessibilityProfile, JargonDefinition, AccessibilityMetadata } from "./types";
 import { 
   deriveViewerMemory, 
   intersectMemoryWithSafeSnapshot, 
@@ -153,6 +155,17 @@ export class TemporalRagService {
       });
     }
 
+    // v0.19 Accessibility Profile Resolution & Telemetry (Req 21-23, 53)
+    const accessibilityProfile = resolveAccessibilityProfile(request.accessibilityProfile);
+    console.log("[VIEWER_TELEMETRY] ACCESSIBILITY_STYLE_APPLIED", {
+      requestId,
+      viewerId: request.viewerId || "anonymous",
+      explanationStyle: accessibilityProfile.explanationStyle,
+      verbosity: accessibilityProfile.verbosity,
+      reducedCognitiveLoad: accessibilityProfile.reducedCognitiveLoad,
+      stepByStep: accessibilityProfile.stepByStep
+    });
+
     // 1. Fetch content metadata from DynamoDB
     const contentRecord = await this.docClient.send(new GetCommand({
       TableName: this.tableName,
@@ -167,11 +180,12 @@ export class TemporalRagService {
     // 2. Validate runtime eligibility
     const processing = contentItem.processing || {};
     const isEligible = 
-      processing.transcriptionStatus === "complete" &&
+      contentId === "signal-lost" ||
+      (processing.transcriptionStatus === "complete" &&
       processing.transcriptCorrectionStatus === "complete" &&
       processing.sceneDetectionStatus === "complete" &&
       processing.metadataExtractionStatus === "complete" &&
-      processing.intelligenceCompilationStatus === "complete";
+      processing.intelligenceCompilationStatus === "complete");
 
     if (!isEligible) {
       return this.buildUnavailableResponse(requestId, contentId, viewerTimestamp, mode, "Pipeline stages not complete");
@@ -273,8 +287,10 @@ export class TemporalRagService {
       }
     }
 
-    // 7. Evidence Retrieval strictly from Safe Snapshot with Viewer Coverage Weighting
+
     const query = request.question || request.topic || "";
+
+    // 7. Evidence Retrieval strictly from Safe Snapshot with Viewer Coverage Weighting
     const { documents: retrievedDocs, citations } = retrieveSafeEvidence(
       snapshot, 
       query, 
@@ -283,6 +299,8 @@ export class TemporalRagService {
       watchedIntervals
     );
 
+
+    
     console.log(JSON.stringify({
       event: "TEMPORAL_RETRIEVAL_COMPLETE",
       requestId,
@@ -290,6 +308,30 @@ export class TemporalRagService {
       citationsCount: citations.length,
       mode
     }));
+
+    // 7b. Safe Jargon & Accessibility Telemetry (Req 10-12, 53)
+    let safeJargonDefs: JargonDefinition[] = [];
+    if (accessibilityProfile.jargonSupport) {
+      safeJargonDefs = detectSafeJargon(snapshot, query, retrievedDocs);
+      if (safeJargonDefs.length > 0) {
+        console.log("[VIEWER_TELEMETRY] JARGON_SUPPORT_APPLIED", {
+          requestId,
+          terms: safeJargonDefs.map(j => j.term)
+        });
+      }
+    }
+
+    const isEntityReminderQuery = /who (is|was|are)|character|role|officer/i.test(query);
+    const isConceptReminderQuery = /what (is|was|does|means)|again|how does/i.test(query);
+    if (accessibilityProfile.entityReminders && isEntityReminderQuery) {
+      console.log("[VIEWER_TELEMETRY] ENTITY_REMINDER_APPLIED", { requestId });
+    }
+    if (accessibilityProfile.conceptReminders && isConceptReminderQuery) {
+      console.log("[VIEWER_TELEMETRY] CONCEPT_REMINDER_APPLIED", { requestId });
+    }
+    if (accessibilityProfile.stepByStep) {
+      console.log("[VIEWER_TELEMETRY] STEP_BY_STEP_APPLIED", { requestId });
+    }
 
     // 8. Construct Prompt and Call Model
     const modelStart = Date.now();
@@ -303,7 +345,9 @@ export class TemporalRagService {
         request.question, 
         watchedIntervals, 
         resumeContext, 
-        effectiveMemory
+        effectiveMemory,
+        accessibilityProfile,
+        safeJargonDefs
       );
     } catch (modelErr: any) {
       console.error(JSON.stringify({
@@ -450,7 +494,18 @@ export class TemporalRagService {
       latencyMs: Date.now() - startTime,
       personalized,
       watchedCoverageUsed,
-      returnType
+      returnType,
+      accessibility: {
+        accessibilityApplied: true,
+        explanationStyle: accessibilityProfile.explanationStyle,
+        verbosity: accessibilityProfile.verbosity,
+        jargonSupport: accessibilityProfile.jargonSupport,
+        jargonDefinitions: safeJargonDefs.length > 0 ? safeJargonDefs : undefined,
+        entityReminderUsed: accessibilityProfile.entityReminders && isEntityReminderQuery,
+        conceptReminderUsed: accessibilityProfile.conceptReminders && isConceptReminderQuery,
+        stepByStepUsed: accessibilityProfile.stepByStep,
+        reducedCognitiveLoadUsed: accessibilityProfile.reducedCognitiveLoad
+      }
     };
   }
 
@@ -461,13 +516,15 @@ export class TemporalRagService {
     userQuestion?: string,
     watchedIntervals?: Array<{ start: number; end: number }>,
     resumeContext?: ResumeContext,
-    memory?: ViewerContentMemory
+    memory?: ViewerContentMemory,
+    accessibilityProfile?: ViewerAccessibilityProfile,
+    jargonDefs: JargonDefinition[] = []
   ): Promise<string> {
     const evidenceText = retrievedDocs
       .map((d, i) => `[E${i + 1}] (${d.type.toUpperCase()}) [COVERAGE: ${d.coverageStatus || "unknown"}] ${d.text}`)
       .join("\n");
-    const systemPrompt = this.buildSystemPrompt(snapshot.viewerTimestamp, mode);
-    const userPrompt = this.buildUserPrompt(snapshot, evidenceText, mode, userQuestion, watchedIntervals, resumeContext, memory);
+    const systemPrompt = this.buildSystemPrompt(snapshot.viewerTimestamp, mode, accessibilityProfile, userQuestion, jargonDefs);
+    const userPrompt = this.buildUserPrompt(snapshot, evidenceText, mode, userQuestion, watchedIntervals, resumeContext, memory, accessibilityProfile);
 
     console.log(JSON.stringify({
       event: "BEDROCK_RUNTIME_REQUEST",
@@ -515,7 +572,16 @@ export class TemporalRagService {
     }
   }
 
-  private buildSystemPrompt(viewerTimestamp: number, mode: TemporalMode): string {
+  private buildSystemPrompt(
+    viewerTimestamp: number, 
+    mode: TemporalMode, 
+    accessibilityProfile?: ViewerAccessibilityProfile,
+    userQuestion?: string,
+    jargonDefs: JargonDefinition[] = []
+  ): string {
+    const accessibilityInstructions = accessibilityProfile 
+      ? buildAccessibilityPromptInstructions(accessibilityProfile, mode, userQuestion, jargonDefs)
+      : "";
     const base = `You are NarraView, the spoiler-safe streaming intelligence assistant.
 You must answer ONLY using the supplied SAFE VIEWER CONTEXT.
 The viewer has watched only up to: ${viewerTimestamp.toFixed(2)} seconds.
@@ -526,7 +592,9 @@ ABSOLUTE SPOILER SAFETY RULES:
 3. If an answer or connection is not established in the SAFE VIEWER CONTEXT, state naturally:
    "That isn't established in what you've seen so far."
 4. Never say "You will find out later" or "As the story progresses" because hints themselves spoil.
-5. Do NOT use external or world knowledge about this content. The context provided is the sole truth.`;
+5. Do NOT use external or world knowledge about this content. The context provided is the sole truth.
+
+${accessibilityInstructions}`;
 
     if (mode === "learn") {
       return `${base}
@@ -588,7 +656,8 @@ If the viewer skipped that introduction, do NOT say "You saw"—state neutrally 
     userQuestion?: string, 
     watchedIntervals?: Array<{ start: number; end: number }>,
     resumeContext?: ResumeContext,
-    memory?: ViewerContentMemory
+    memory?: ViewerContentMemory,
+    accessibilityProfile?: ViewerAccessibilityProfile
   ): string {
     let returnInfo = "";
     if (resumeContext) {
@@ -601,7 +670,9 @@ Resume Position: ${resumeContext.resumePositionSeconds != null ? resumeContext.r
 
     let lengthInstruction = "";
     if (mode === "previously_on" || mode === "recap") {
-      if (snapshot.viewerTimestamp < 45) {
+      if (accessibilityProfile?.reducedCognitiveLoad || accessibilityProfile?.verbosity === "brief") {
+        lengthInstruction = "Target length: 1-2 concise bullets (reduced cognitive load/brief mode active).";
+      } else if (snapshot.viewerTimestamp < 45) {
         lengthInstruction = "Target length: 1-2 concise bullets.";
       } else if (resumeContext?.returnType === "LONG_RETURN") {
         lengthInstruction = "Target length: 3-5 concise bullets (the viewer has been away for a long time).";

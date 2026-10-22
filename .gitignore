@@ -5,12 +5,16 @@
 .vscode
 .tmp
 
+*.zip
 *.mp4
 dist
 build
 node_modules
 CMakeUserPresets.json
 npm-debug.log
+
+cdk.out/
+
 
 README.md
 # Environment files

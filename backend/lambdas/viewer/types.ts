@@ -108,3 +108,37 @@ export interface ViewerContentMemory {
   intelligenceVersion: number;
   viewerTimestamp: number;
 }
+
+// ============================================================================
+// v0.19 ACCESSIBILITY INTELLIGENCE & ADAPTIVE EXPLANATION
+// ============================================================================
+
+export type ExplanationStyle = "standard" | "simple" | "very_simple";
+export type Verbosity = "brief" | "normal" | "detailed";
+
+export interface ViewerAccessibilityProfile {
+  viewerId: string;
+  explanationStyle: ExplanationStyle;
+  verbosity: Verbosity;
+  jargonSupport: boolean;
+  entityReminders: boolean;
+  conceptReminders: boolean;
+  stepByStep: boolean;
+  reducedCognitiveLoad: boolean;
+  autoExplainComplexTerms: boolean;
+  updatedAt: string;
+}
+
+export const DEFAULT_ACCESSIBILITY_PROFILE: Omit<ViewerAccessibilityProfile, "viewerId" | "updatedAt"> = {
+  explanationStyle: "standard",
+  verbosity: "normal",
+  jargonSupport: true,
+  entityReminders: true,
+  conceptReminders: true,
+  stepByStep: false,
+  reducedCognitiveLoad: false,
+  autoExplainComplexTerms: false,
+};
+
+export const ALLOWED_EXPLANATION_STYLES: ExplanationStyle[] = ["standard", "simple", "very_simple"];
+export const ALLOWED_VERBOSITIES: Verbosity[] = ["brief", "normal", "detailed"];

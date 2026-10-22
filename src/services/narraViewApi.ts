@@ -1,4 +1,5 @@
 import { API_BASE_URL } from '../config/api';
+import { ViewerAccessibilityProfile, AccessibilityMetadata } from '../types/content';
 
 export interface AskNarraViewRequest {
   contentId: string;
@@ -15,6 +16,7 @@ export interface AskNarraViewRequest {
   viewerId?: string;
   watchedIntervals?: Array<{ start: number; end: number }>;
   resumeContext?: any;
+  accessibilityProfile?: Partial<ViewerAccessibilityProfile>;
 }
 
 export interface AskNarraViewResponse {
@@ -44,6 +46,7 @@ export interface AskNarraViewResponse {
   viewerTimestamp?: number;
   citations?: any[];
   safety?: any;
+  accessibility?: AccessibilityMetadata;
 }
 
 export const askNarraView = async (request: AskNarraViewRequest): Promise<AskNarraViewResponse> => {

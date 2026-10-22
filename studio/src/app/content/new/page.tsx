@@ -13,6 +13,7 @@ export default function AddContent() {
     contentId: "",
     description: "",
     contentType: "film",
+    contentCategory: "other",
     language: "en",
   });
 
@@ -171,6 +172,21 @@ export default function AddContent() {
                 value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})}
                 className="w-full bg-[#1A1A22] border border-white/10 rounded px-4 py-2 text-white focus:outline-none focus:border-[#F5B800] transition-colors" 
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-white/60 mb-1">Content Category</label>
+              <select 
+                value={formData.contentCategory} onChange={e => setFormData({...formData, contentCategory: e.target.value})}
+                className="w-full bg-[#1A1A22] border border-white/10 rounded px-4 py-2 text-white focus:outline-none focus:border-[#F5B800] transition-colors"
+              >
+                <option value="documentary">Documentary</option>
+                <option value="tutorial">Tutorial</option>
+                <option value="demo">Demo</option>
+                <option value="narrative">Story / Narrative</option>
+                <option value="educational">Educational</option>
+                <option value="other">Other</option>
+              </select>
             </div>
 
             <div className="grid grid-cols-2 gap-4">

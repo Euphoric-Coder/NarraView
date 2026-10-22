@@ -17,11 +17,15 @@ interface FocusableButtonProps {
   nextFocusRight?: any;
 }
 
-export const FocusableButton = ({ label, onPress, style, labelStyle, hasTVPreferredFocus, disabled, nextFocusDown, nextFocusUp, nextFocusLeft, nextFocusRight }: FocusableButtonProps) => {
+export const FocusableButton = React.forwardRef<any, FocusableButtonProps>((
+  { label, onPress, style, labelStyle, hasTVPreferredFocus, disabled, nextFocusDown, nextFocusUp, nextFocusLeft, nextFocusRight }: FocusableButtonProps,
+  ref: any
+) => {
   const [isFocused, setIsFocused] = useState(false);
 
   return (
     <Pressable
+      ref={ref}
       disabled={disabled}
       hasTVPreferredFocus={hasTVPreferredFocus && !disabled}
       nextFocusDown={nextFocusDown}
@@ -49,7 +53,7 @@ export const FocusableButton = ({ label, onPress, style, labelStyle, hasTVPrefer
       </Text>
     </Pressable>
   );
-};
+});
 
 const styles = StyleSheet.create({
   button: {
