@@ -228,6 +228,7 @@ NarraView/
 * **AWS CLI** (configured with appropriate development credentials)
 * **AWS CDK CLI** (`npm install -g aws-cdk`)
 * **Amazon Vega SDK & Vega CLI** (`source ~/vega/env`)
+* **MacOS (M Series Chip / Old Model with Latest Version of MacOS)**
 
 ---
 
@@ -385,9 +386,3 @@ The following major systems were engineered and expanded during the hackathon wi
 * **Target Platform:** Tested primarily on the Amazon Vega Virtual Device (macOS x86_64 / aarch64) representing the Fire TV / Vega OS target.
 * **Catalog Size:** The demonstration environment includes a focused set of curated video assets (*CityCare Demo*, *ML Systems Tutorial*, *Signal Lost*) to allow rapid judging evaluation.
 * **AI Latency:** Response latency for in-player Q&A depends on live AWS Lambda execution and model inference times.
-
----
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
