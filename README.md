@@ -236,7 +236,7 @@ NarraView/
 
 ```bash
 # Clone the repository
-git clone <REPOSITORY_URL>
+git clone https://github.com/Euphoric-Coder/NarraView.git
 cd NarraView
 
 # Install root dependencies (React Native / Vega / Backend)
