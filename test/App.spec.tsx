@@ -1,5 +1,5 @@
 import "react-native";
-import { render, fireEvent } from "@testing-library/react-native";
+import { render, fireEvent, waitFor } from "@testing-library/react-native";
 import * as React from "react";
 
 jest.mock("@amazon-devices/react-native-w3cmedia", () => {
@@ -69,11 +69,13 @@ describe("App", () => {
     expect(screen.getByText("Explore Collection")).toBeTruthy();
   });
 
-  it("navigates to details when a content card is pressed without errors", () => {
+  it("navigates to details when a content card is pressed without errors", async () => {
     const screen = render(<App />);
-    const cardTitle = screen.getByText("Origins");
+    const cardTitle = await screen.findByText("CityCare Demo");
     expect(cardTitle).toBeTruthy();
     fireEvent.press(cardTitle);
-    expect(screen.getByText("Watch Now")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText("Watch Now")).toBeTruthy();
+    });
   });
 });

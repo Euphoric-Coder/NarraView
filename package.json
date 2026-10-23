@@ -18,7 +18,8 @@
     "build": "npm-run-all build:release",
     "release": "npm-run-all lint test build:app",
     "generate-config:dev": "node scripts/generate-config.js development",
-    "generate-config:prod": "node scripts/generate-config.js production"
+    "generate-config:prod": "node scripts/generate-config.js production",
+    "demo:reset": "npx tsx scripts/reset-demo-viewer.ts"
   },
   "dependencies": {
     "@amazon-devices/react-native-kepler": "~4.0.0",

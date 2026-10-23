@@ -126,10 +126,13 @@ export const handler = async (event: any): Promise<any> => {
     }
 
     // Determine admin caller for Studio Temporal RAG Test tool (Requirements 58, 65)
-    const adminToken = process.env.ADMIN_TOKEN || 'narraview-admin-token';
-    const isAdmin = event.headers?.['x-admin-token'] === adminToken ||
-      event.headers?.['X-Admin-Token'] === adminToken ||
-      body.allowPreActivationTest === true;
+    const adminToken = process.env.ADMIN_TOKEN;
+    const isAdmin = Boolean(
+      adminToken && (
+        event.headers?.['x-admin-token'] === adminToken ||
+        event.headers?.['X-Admin-Token'] === adminToken
+      )
+    ) || body.allowPreActivationTest === true;
 
     // Fetch viewer watch state / intervals and resumeContext (v0.17 & v0.18)
     const resumeContext = body.resumeContext;

@@ -14,7 +14,7 @@ import * as path from 'path';
 const AWS_REGION = 'eu-north-1';
 const BEDROCK_MANTLE_BASE_URL = 'https://bedrock-mantle.eu-north-1.api.aws/v1';
 const BEDROCK_MANTLE_MODEL = 'openai.gpt-oss-120b';
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'narraview-admin-token';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.NARRAVIEW_ADMIN_TOKEN || "";
 
 
 export class CdkStack extends cdk.Stack {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { API_BASE_URL } from "@/config";
+import { API_BASE_URL, ADMIN_API_BASE_URL } from "@/config";
 
 interface WatchedInterval {
   start: number;
@@ -214,11 +214,10 @@ export default function ViewerSessionsPage() {
     const watchedIntervals = currentHist?.watchedIntervals || [];
 
     try {
-      const res = await fetch(`${API_BASE_URL}/ai/ask`, {
+      const res = await fetch(`${ADMIN_API_BASE_URL}/ai/ask`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "x-admin-token": "narraview-admin-token"
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
           contentId: testContentId,
@@ -262,11 +261,10 @@ export default function ViewerSessionsPage() {
 
     try {
       const executeQuery = async (style: string) => {
-        const res = await fetch(`${API_BASE_URL}/ai/ask`, {
+        const res = await fetch(`${ADMIN_API_BASE_URL}/ai/ask`, {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
-            "x-admin-token": "narraview-admin-token"
+            "Content-Type": "application/json"
           },
           body: JSON.stringify({
             contentId: sideContentId,

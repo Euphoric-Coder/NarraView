@@ -1,26 +1,44 @@
-*.iml
-*.swp
-.idea
-.DS_Store
-.vscode
-.tmp
+# Dependencies
+node_modules/
+studio/node_modules/
+infrastructure/cdk/node_modules/
 
-*.zip
-*.mp4
-dist
-build
-node_modules
-CMakeUserPresets.json
-npm-debug.log
-
-cdk.out/
-
-
-README.md
 # Environment files
 .env
 .env.local
-.env.*.local
-.env.development
-.env.production
+.env.*
 !.env.example
+!studio/.env.example
+
+# Build, compilation and test artifacts
+dist/
+build/
+coverage/
+cdk.out/
+buildinfo.json
+CMakeUserPresets.json
+
+# Editor, OS and system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.iml
+
+# Logs and runtime output
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+.tmp/
+*.tmp
+
+# Media archives
+*.mp4
+*.zip
+
+# AWS credentials and secret tokens
+*credentials*
+*aws_credentials*
